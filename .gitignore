@@ -1,0 +1,61 @@
+# =========================
+# Python
+# =========================
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python sanal ortamları
+.venv/
+venv/
+env/
+libr/
+
+# Python araçlarının cache dosyaları
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+
+# =========================
+# Gizli / yerel ayarlar
+# =========================
+
+# Ortam değişkenleri ve şifreler
+.env
+.env.*
+!.env.example
+
+
+# =========================
+# IDE / Editör
+# =========================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+
+# =========================
+# İşletim sistemi
+# =========================
+
+.DS_Store
+Thumbs.db
+
+
+# =========================
+# Geçici dosyalar / loglar
+# =========================
+
+*.log
+*.tmp
+*.temp
+
+# Local SearXNG instance
+searxng/

@@ -1,0 +1,11 @@
+{
+    "provider": "searxng",
+    "searxng_base_url": "http://localhost:9090",
+    "searxng_language": "auto",
+    "searxng_safesearch": 0,
+    "searxng_categories": "general",
+    "tavily_base_url": "https://api.tavily.com",
+    "tavily_api_key": "",
+    "max_results": 5,
+    "timeout": 10
+}
