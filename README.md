@@ -206,7 +206,6 @@ TermiLLM/
 ├── searxng/settings.yml     # yerel SearXNG örneği için (json formatı etkin)
 ├── search_config.json       # arama ayarları (çalışırken düzenlenebilir)
 ├── setup.sh                 # sanal ortam + bağımlılık kurulumu
-└── save/main.py             # refactor öncesi tek dosyalık eski sürüm (referans)
 ```
 
 Katmanlar tek yönlü bağımlıdır: `ui` ← `commands/chat` ← `sessions/llm/media` gibi; LLM katmanı oturum dosyalarından, storage ise terminal'den habersizdir. Mimariyi detaylandıran tasarım belgesi ve refactor raporu için `~/Desktop/ai/v7/` altındaki `readme.md` ve `rapor.md` dosyalarına bakabilirsiniz.

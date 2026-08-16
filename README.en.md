@@ -206,7 +206,6 @@ TermiLLM/
 ├── searxng/settings.yml     # for a local SearXNG instance (JSON format enabled)
 ├── search_config.json       # search settings (editable at runtime)
 ├── setup.sh                 # virtualenv + dependency setup
-└── save/main.py             # pre-refactor single-file version (reference)
 ```
 
 Dependencies flow one way (`ui` ← `commands/chat` ← `sessions/llm/media`, etc.): the LLM layer knows nothing about session files, and storage knows nothing about the terminal. For the design document and the refactoring report (Turkish), see `readme.md` and `rapor.md` under `~/Desktop/ai/v7/`.
