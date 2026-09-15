@@ -59,3 +59,6 @@ Thumbs.db
 
 # Local SearXNG instance
 searxng/
+
+# Yerel görev/not dosyası (depoya dahil değil)
+readme.md
