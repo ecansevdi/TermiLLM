@@ -15,13 +15,19 @@ class TerminalUI:
         return input(f"{GREEN}Sen:{RESET} ").strip()
 
     def show_fetching_context(self):
-        print(f"\n🔍 Server bilgileri alınıyor...", end=" ")
+        print(f"\n🔍 Provider'dan context bilgisi alınıyor...", end=" ")
 
-    def show_fetched_context(self, n_ctx: int):
-        print(f"{GREEN}✓{RESET} n_ctx={n_ctx:,}")
+    def show_fetched_context(self, n_ctx: int, source: str):
+        if source == "fallback":
+            print(f"{YELLOW}✗{RESET}")
+        else:
+            print(f"{GREEN}✓{RESET} ({source}: {n_ctx:,} token)")
 
     def show_context_fallback_warning(self, fallback: int):
-        print(f"{YELLOW}⚠ Context size alınamadı. Varsayılan: {fallback}{RESET}")
+        print(f"{YELLOW}⚠ Context size sağlayıcıdan alınamadı; varsayılan "
+              f"{fallback} token kullanılıyor.{RESET}")
+        print(f"{YELLOW}  İpucu: .env'e CONTEXT_PROVIDER ekleyerek kaynağı "
+              f"belirtebilirsin (örn. CONTEXT_PROVIDER=anthropic).{RESET}")
 
     def show_startup(self, title: str, session_id: str, max_context: int, pipe_path: str):
         print(f"\n🤖 {CYAN}Yapay Zeka Ajanı{RESET}")

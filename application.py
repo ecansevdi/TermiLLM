@@ -3,7 +3,7 @@ from chat.context import ContextManager
 from chat.service import ChatService
 from commands.router import CommandRouter
 from config import Config
-from llm.server_info import fetch_server_context_size
+from llm.server_info import resolve_context_size
 from media.pipe import PipeInput
 from sessions.manager import SessionManager
 from state import ApplicationState
@@ -45,10 +45,16 @@ class AgentApplication:
         self.pipe_input.install_pre_input_hook()
 
         self.terminal.show_fetching_context()
-        n_ctx, used_fallback = fetch_server_context_size(self.config.server_base)
-        if used_fallback:
+        n_ctx, source = resolve_context_size(
+            self.config.api_base_url,
+            self.config.api_key,
+            self.config.agent_model,
+            fallback=self.config.context_fallback,
+            provider=self.config.context_provider,
+        )
+        if source == "fallback":
             self.terminal.show_context_fallback_warning(n_ctx)
-        self.terminal.show_fetched_context(n_ctx)
+        self.terminal.show_fetched_context(n_ctx, source)
         self.state.max_context_tokens = n_ctx
 
         title = storage.get_title(self.state.active_session.id)

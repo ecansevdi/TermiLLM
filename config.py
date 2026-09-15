@@ -21,6 +21,7 @@ class Config:
     chat_directory: str
     context_fallback: int
     context_safety_ratio: float
+    context_provider: str
     system_prompt: str
 
 
@@ -29,7 +30,7 @@ def load_config() -> Config:
         server_base=os.getenv("SERVER_BASE"),
         api_base_url=os.getenv("base_url"),
         api_key=os.getenv("api_key"),
-        agent_model="agent_model",
+        agent_model=os.getenv("agent_model"),
         whisper_bin=os.environ.get("WHISPER_BIN", "whisper-cli"),
         whisper_model=os.environ.get(
             "WHISPER_MODEL",
@@ -38,8 +39,9 @@ def load_config() -> Config:
         whisper_lang=os.environ.get("WHISPER_LANG", "tr"),
         pipe_path=os.environ.get("LLAMA_PIPE", "/tmp/llama_input.pipe"),
         chat_directory="chats",
-        context_fallback=4096,
+        context_fallback=int(os.environ.get("CONTEXT_FALLBACK", "4096")),
         context_safety_ratio=0.85,
+        context_provider=os.environ.get("CONTEXT_PROVIDER", "").strip().lower(),
         system_prompt=(
             "Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt verirsin. "
             "Cevapların net, kısa ve bilgi odaklıdır.\n"
