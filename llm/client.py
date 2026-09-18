@@ -3,6 +3,7 @@ import time
 from openai import OpenAI
 
 from config import Config
+from llm.cancel import CancelWatch, GenerationCancelled
 from llm.stream import StreamParser, StreamResult
 from ui.stream_renderer import StreamRenderer
 
@@ -18,7 +19,8 @@ class LLMClient:
         )
 
     def stream(self, messages: list, renderer: StreamRenderer,
-               debug_enabled: bool = False) -> StreamResult:
+               debug_enabled: bool = False,
+               cancel: CancelWatch = None) -> StreamResult:
         response = self._client.chat.completions.create(
             model=self.model,
             messages=messages,
@@ -31,47 +33,69 @@ class LLMClient:
                 }
             },
         )
+        if cancel:
+            cancel.bind_closer(lambda: response.close())
+            cancel.check()
 
         parser = StreamParser(renderer)
         input_tokens = 0
         output_tokens = 0
         t_first_output = None
 
-        for chunk in response:
-            if hasattr(chunk, "usage") and chunk.usage:
-                input_tokens = chunk.usage.prompt_tokens or 0
-                output_tokens = chunk.usage.completion_tokens or 0
+        try:
+            for chunk in response:
+                if cancel:
+                    cancel.check()
+                if hasattr(chunk, "usage") and chunk.usage:
+                    input_tokens = chunk.usage.prompt_tokens or 0
+                    output_tokens = chunk.usage.completion_tokens or 0
 
-            if not chunk.choices:
-                continue
+                if not chunk.choices:
+                    continue
 
-            delta = chunk.choices[0].delta
-            if not delta:
-                continue
+                delta = chunk.choices[0].delta
+                if not delta:
+                    continue
 
-            if debug_enabled:
-                with open("debug.log", "a", encoding="utf-8") as dbg:
-                    dbg.write(repr(chunk) + "\n")
+                if debug_enabled:
+                    with open("debug.log", "a", encoding="utf-8") as dbg:
+                        dbg.write(repr(chunk) + "\n")
 
-            reasoning = getattr(delta, "reasoning_content", None)
-            if reasoning:
-                if t_first_output is None:
-                    t_first_output = time.monotonic()
-                parser.feed_thinking(reasoning)
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    if t_first_output is None:
+                        t_first_output = time.monotonic()
+                    parser.feed_thinking(reasoning)
 
-            if delta.content:
-                prev_len = len(parser.response_text) + len(parser.thinking_text)
-                parser.feed_content(delta.content)
-                if t_first_output is None and (
-                    len(parser.response_text) + len(parser.thinking_text) > prev_len
-                ):
-                    t_first_output = time.monotonic()
-                if parser.completed_search:
-                    try:
-                        response.close()
-                    except Exception:
-                        pass
-                    break
+                if delta.content:
+                    prev_len = len(parser.response_text) + len(parser.thinking_text)
+                    parser.feed_content(delta.content)
+                    if t_first_output is None and (
+                        len(parser.response_text) + len(parser.thinking_text) > prev_len
+                    ):
+                        t_first_output = time.monotonic()
+                    if parser.completed_search:
+                        try:
+                            response.close()
+                        except Exception:
+                            pass
+                        break
+        except GenerationCancelled:
+            try:
+                response.close()
+            except Exception:
+                pass
+            parser.flush()
+            raise
+        except Exception:
+            if cancel and cancel.event.is_set():
+                try:
+                    response.close()
+                except Exception:
+                    pass
+                parser.flush()
+                raise GenerationCancelled
+            raise
 
         parser.flush()
 

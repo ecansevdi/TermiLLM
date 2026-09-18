@@ -1,5 +1,6 @@
 from chat.attachments import AttachmentManager
 from chat.context import ContextManager
+from chat.mentions import MentionError, MentionProcessor
 from chat.service import ChatService
 from commands.router import CommandRouter
 from config import Config
@@ -7,7 +8,7 @@ from llm.server_info import resolve_context_size
 from media.pipe import PipeInput
 from sessions.manager import SessionManager
 from state import ApplicationState
-from ui.terminal import TerminalUI
+from ui.terminal import RED, RESET, TerminalUI
 
 
 class AgentApplication:
@@ -17,7 +18,7 @@ class AgentApplication:
                  terminal: TerminalUI, router: CommandRouter,
                  chat_service: ChatService, session_manager: SessionManager,
                  attachments: AttachmentManager, pipe_input: PipeInput,
-                 context: ContextManager):
+                 context: ContextManager, mentions: MentionProcessor = None):
         self.config = config
         self.state = state
         self.terminal = terminal
@@ -27,6 +28,7 @@ class AgentApplication:
         self.attachments = attachments
         self.pipe_input = pipe_input
         self.context = context
+        self.mentions = mentions
 
     def run(self):
         storage = self.sessions.storage
@@ -77,7 +79,9 @@ class AgentApplication:
                 self.terminal.show_attachment_count(self.attachments.count())
 
             try:
-                user_input = self.terminal.prompt()
+                user_input = self.terminal.prompt(
+                    poll_prefill=self.pipe_input.take_prefill
+                )
             except (EOFError, KeyboardInterrupt):
                 self.terminal.show_quit()
                 break
@@ -88,6 +92,13 @@ class AgentApplication:
 
             if self.router.handle(user_input, self.state):
                 continue
+
+            if self.mentions and ("@" in user_input or "?" in user_input):
+                try:
+                    user_input = self.mentions.process(user_input)
+                except MentionError as e:
+                    print(f"{RED}❌ {e}{RESET}\n")
+                    continue
 
             if not user_input and not self.attachments.has_pending():
                 continue

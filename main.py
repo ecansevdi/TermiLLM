@@ -1,8 +1,8 @@
 from application import AgentApplication
 from chat.attachments import AttachmentManager
 from chat.context import ContextManager
+from chat.mentions import MentionProcessor
 from chat.service import ChatService
-from commands.media_commands import MediaCommands
 from commands.router import CommandRouter
 from commands.search_commands import SearchCommands
 from commands.session_commands import SessionCommands
@@ -46,10 +46,12 @@ def main():
     )
 
     session_commands = SessionCommands(session_manager, context, attachments, terminal)
-    media_commands = MediaCommands(audio, files, images, attachments, terminal)
     system_commands = SystemCommands(session_manager, terminal)
     search_commands = SearchCommands(search_service, attachments, chat_service, terminal)
-    router = CommandRouter(session_commands, media_commands, system_commands, search_commands)
+    router = CommandRouter(session_commands, system_commands, search_commands)
+    mentions = MentionProcessor(
+        files, images, attachments, search_service, terminal, audio=audio,
+    )
 
     app = AgentApplication(
         config,
@@ -61,6 +63,7 @@ def main():
         attachments,
         pipe_input,
         context,
+        mentions,
     )
     app.run()
 

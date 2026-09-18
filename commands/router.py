@@ -1,4 +1,3 @@
-from commands.media_commands import MediaCommands
 from commands.search_commands import SearchCommands
 from commands.session_commands import SessionCommands
 from commands.system_commands import SystemCommands
@@ -11,11 +10,9 @@ class CommandRouter:
     """
 
     def __init__(self, session_commands: SessionCommands,
-                 media_commands: MediaCommands,
                  system_commands: SystemCommands,
                  search_commands: SearchCommands):
         self._session = session_commands
-        self._media = media_commands
         self._system = system_commands
         self._search = search_commands
 
@@ -53,14 +50,5 @@ class CommandRouter:
             return True
         if user_input == "/stats":
             self._system.stats(state)
-            return True
-        if user_input.startswith("/ses"):
-            self._media.ses(state, user_input)
-            return True
-        if user_input.startswith("/read") or user_input.startswith("/dosya"):
-            self._media.read(state, user_input)
-            return True
-        if user_input.startswith("/resim"):
-            self._media.resim(state, user_input)
             return True
         return False

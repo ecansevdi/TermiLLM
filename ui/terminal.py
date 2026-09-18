@@ -11,8 +11,12 @@ BOLD_RESET = '\033[22m'
 class TerminalUI:
     """Terminal sunum katmanı."""
 
-    def prompt(self) -> str:
-        return input(f"{GREEN}Sen:{RESET} ").strip()
+    def __init__(self):
+        pass
+
+    def prompt(self, poll_prefill=None) -> str:
+        from ui.line_edit import read_line
+        return read_line(poll_prefill=poll_prefill).strip()
 
     def show_fetching_context(self):
         print(f"\n🔍 Provider'dan context bilgisi alınıyor...", end=" ")
@@ -36,7 +40,7 @@ class TerminalUI:
         print(f"{DIM}   Max context  : {max_context:,} token")
         print(f"   Güvenlik payı: {int(max_context * 0.85):,} token")
         print(f"   Whisper pipe : {pipe_path}")
-        print(f"   /help yazarak komutları görebilirsiniz{RESET}\n")
+        print(f"   {RESET}{DIM}Dosya {GREEN}@yol{RESET}{DIM}  ·  arama {GREEN}?\"sorgu\"{RESET}{DIM}  ·  kes {GREEN}Ctrl+X{RESET}{DIM}  ·  /help{RESET}\n")
 
     def show_context_bar(self, used: int, maximum: int):
         ratio = min(used / maximum, 1.0)
@@ -95,16 +99,16 @@ class TerminalUI:
             ("/stats",          "İstatistik göster"),
             ("/debug",          "Debug aç/kapat"),
             ("─── Medya ─────", ""),
-            ("/ses",            "Mikrofonu kaydet ve belleğe al"),
-            ("/ses <dosya>",    "Ses dosyasını çevir ve belleğe al (.wav)"),
-            ("/read <dosya>",   "Dosyayı oku ve belleğe al (veya /dosya)"),
-            ("/resim <dosya>",  "Resmi belleğe al (vision model gerekir)"),
+            ("@dosya",          "Yazınca kutu; ↑↓/Tab seç, Enter al, Esc kapat"),
+            ("@src/  @~/  @/",  "Alt dizin / ev / mutlak yol"),
             ("─── Arama ─────", ""),
-            ("(otomatik)",       "Model gerekirse kendisi web'de arar (ajan)"),
-            ("/ara <sorgu>",     "Zorunlu arama: önce ara, sonra modele gönder"),
+            ("(otomatik)",       "Model gerekirse kendisi web'de arar"),
+            ("?\"sorgu\"",      "Satır içinde web ara, yazmaya devam et"),
+            ("/ara <sorgu>",     "Web ara, belleğe al (sonraki mesajla gider)"),
             ("/arama",           "Arama ayarları (SearXNG / Tavily)"),
             ("─────────────",  ""),
             ("/help",           "Yardım menüsü"),
+            ("Ctrl+X",          "Yanıtı kes (program açık kalır)"),
             ("q/quit",          "Çıkış"),
         ]
         print(f"\n{CYAN}── Komutlar ─────────────────────────{RESET}")
@@ -114,6 +118,16 @@ class TerminalUI:
             else:
                 print(f"{GREEN}{cmd:<20}{RESET} {desc}")
         print()
+        print(f"{CYAN}── Kullanım ─────────────────────────{RESET}")
+        print(f"  {DIM}dosya{RESET}   {GREEN}@readme.md{RESET} şunu özetle")
+        print(f"           {GREEN}@foto.png{RESET} bu resmi açıkla")
+        print(f"           {GREEN}@ses.wav{RESET} bunu yazıya dök")
+        print(f"           {GREEN}@src/{RESET}  {DIM}kutuda {GREEN}../{RESET}{DIM}  ↑↓/Tab seç  Enter dosya veya dizin{RESET}")
+        print(f"  {DIM}arama{RESET}   {GREEN}?\"python 3.14 changelog\"{RESET} bunu özetle")
+        print(f"           {GREEN}@main.py ?\"asyncio docs\"{RESET} bu koda uyarla")
+        print(f"           {GREEN}/ara python 3.14{RESET}  → sonra prompt yaz")
+        print()
+        print(f"{DIM}Ayrıntı: arama.md{RESET}")
         print(f"{DIM}Whisper pipe: whisper_dinle.sh çalıştır →")
         print(f"  main.py'ye Enter'a basarak aktar{RESET}\n")
 

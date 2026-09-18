@@ -62,3 +62,7 @@ searxng/
 
 # Yerel görev/not dosyası (depoya dahil değil)
 readme.md
+arama.md
+
+# Yerel sohbet geçmişi
+chats/

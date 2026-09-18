@@ -21,7 +21,7 @@ class SearchCommands:
     def ara(self, state: ApplicationState, user_input: str):
         parts = user_input.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():
-            print("Kullanım: /ara <sorgu>\n")
+            print('Kullanım: /ara <sorgu>  veya  ?"sorgu" kalan prompt\n')
             return
         query = parts[1].strip()
 
@@ -44,7 +44,8 @@ class SearchCommands:
         print()
 
         self.attachments.add_text(self.search.format_for_model(query, results))
-        self.chat_service.send_message(query)
+        print(f"{DIM}📎 Sonuçlar eklendi. Prompt yazıp Enter'a basın "
+              f"(veya satır içinde ?\"sorgu\" kullanın).{RESET}\n")
 
     def ayarlar(self, state: ApplicationState):
         config = self.search.load()

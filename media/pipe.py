@@ -56,14 +56,14 @@ class PipeInput:
                 time.sleep(0.5)
 
     def install_pre_input_hook(self):
-        if HAS_READLINE:
-            readline.set_pre_input_hook(self.consume_prefill)
+        """Eski readline kancası; satır editörü take_prefill kullanır."""
+        return
+
+    def take_prefill(self):
+        with self._prefill_lock:
+            text = self._prefill_text
+            self._prefill_text = None
+            return text
 
     def consume_prefill(self):
-        if not HAS_READLINE:
-            return
-        with self._prefill_lock:
-            if self._prefill_text:
-                readline.insert_text(self._prefill_text)
-                readline.redisplay()
-                self._prefill_text = None
+        return self.take_prefill()

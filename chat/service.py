@@ -2,6 +2,7 @@ import os
 
 from chat.attachments import AttachmentManager
 from chat.context import ContextManager
+from llm.cancel import CancelWatch, GenerationCancelled
 from llm.client import LLMClient
 from llm.stream import StreamResult, clean_response
 from search.service import SearchService
@@ -34,12 +35,24 @@ class ChatService:
         self.search = search_service
 
     def send_message(self, user_input: str):
+        print(f"{DIM}   Ctrl+X yanıtı keser (program açık kalır){RESET}")
+        try:
+            with CancelWatch() as cancel:
+                self._send_message(user_input, cancel)
+        except GenerationCancelled:
+            print(f"\n{YELLOW}⚠ Yanıt kesildi{RESET}\n")
+            try:
+                self.renderer.show_stream_end()
+            except Exception:
+                print()
+
+    def _send_message(self, user_input: str, cancel: CancelWatch):
         state = self.state
         history = state.active_session.history
         final_text = self.attachments.build_final_text(user_input)
 
         if self.attachments.vision_message:
-            self._send_with_image(final_text, user_input, history)
+            self._send_with_image(final_text, user_input, history, cancel)
             return
 
         history.append({"role": "user", "content": final_text})
@@ -47,9 +60,10 @@ class ChatService:
 
         searches_done = 0
         while True:
+            cancel.check()
             history = self._trim_history(history, final_text)
             messages = self.context.build_messages(history)
-            result = self._stream_and_respond(messages, history)
+            result = self._stream_and_respond(messages, history, cancel)
 
             if result is None:
                 if history and history[-1]["role"] == "user":
@@ -69,6 +83,7 @@ class ChatService:
 
             blocks = []
             for query in queries:
+                cancel.check()
                 if searches_done >= MAX_SEARCH_ROUNDS:
                     break
                 searches_done += 1
@@ -97,7 +112,8 @@ class ChatService:
             print(f"{DIM}  {idx}. {title} — {result.url}{RESET}")
         return self.search.format_for_model(query, results)
 
-    def _send_with_image(self, final_text: str, user_input: str, history: list):
+    def _send_with_image(self, final_text: str, user_input: str, history: list,
+                         cancel: CancelWatch):
         state = self.state
         self.attachments.vision_message["content"][1]["text"] = final_text
 
@@ -109,7 +125,7 @@ class ChatService:
 
         messages = self.context.build_messages(history[:-1]) + [self.attachments.vision_message]
 
-        result = self._stream_and_respond(messages, history)
+        result = self._stream_and_respond(messages, history, cancel)
         if result:
             state.actual_context_tokens = result.input_tokens + result.output_tokens
         elif history and history[-1]["role"] == "user":
@@ -141,13 +157,17 @@ class ChatService:
             state.active_session.history = history
         return history
 
-    def _stream_and_respond(self, messages: list, history: list):
+    def _stream_and_respond(self, messages: list, history: list,
+                            cancel: CancelWatch = None):
         try:
             result = self.llm_client.stream(
                 messages,
                 renderer=self.renderer,
                 debug_enabled=self.state.debug_enabled,
+                cancel=cancel,
             )
+        except GenerationCancelled:
+            raise
         except Exception as e:
             print(f"\n{RED}[Hata]{RESET}: {e}\n")
             return None
