@@ -3,6 +3,7 @@ import time
 from openai import OpenAI
 
 from config import Config
+from llm.abort import abort_provider_task, abort_stream
 from llm.cancel import CancelWatch, GenerationCancelled
 from llm.stream import StreamParser, StreamResult
 from ui.stream_renderer import StreamRenderer
@@ -33,8 +34,12 @@ class LLMClient:
                 }
             },
         )
+        def _cut_connection():
+            abort_stream(response)
+            abort_provider_task(self._client.base_url, self._client.api_key)
+
         if cancel:
-            cancel.bind_closer(lambda: response.close())
+            cancel.bind_closer(_cut_connection)
             cancel.check()
 
         parser = StreamParser(renderer)
@@ -75,24 +80,15 @@ class LLMClient:
                     ):
                         t_first_output = time.monotonic()
                     if parser.completed_search:
-                        try:
-                            response.close()
-                        except Exception:
-                            pass
+                        abort_stream(response)
                         break
         except GenerationCancelled:
-            try:
-                response.close()
-            except Exception:
-                pass
+            _cut_connection()
             parser.flush()
             raise
         except Exception:
             if cancel and cancel.event.is_set():
-                try:
-                    response.close()
-                except Exception:
-                    pass
+                _cut_connection()
                 parser.flush()
                 raise GenerationCancelled
             raise
