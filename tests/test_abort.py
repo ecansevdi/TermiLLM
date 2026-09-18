@@ -52,6 +52,20 @@ class TestAbortStream(unittest.TestCase):
                         side_effect=OSError("down")):
             abort_provider_task("http://127.0.0.1:8080/v1", None)
 
+    def test_provider_abort_accepts_url_object(self):
+        class URL:
+            def __str__(self):
+                return "http://127.0.0.1:8080/v1"
+        seen = []
+
+        def fake_urlopen(req, timeout=None):
+            seen.append(req.full_url)
+            raise OSError("down")
+
+        with mock.patch("llm.abort.urllib.request.urlopen", side_effect=fake_urlopen):
+            abort_provider_task(URL(), None)
+        self.assertTrue(any("/abort" in u for u in seen))
+
 
 class TestShutdownWalk(unittest.TestCase):
     def test_ignores_none(self):

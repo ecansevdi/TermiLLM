@@ -35,8 +35,15 @@ class LLMClient:
             },
         )
         def _cut_connection():
-            abort_stream(response)
-            abort_provider_task(self._client.base_url, self._client.api_key)
+            try:
+                abort_stream(response)
+            except Exception:
+                pass
+            try:
+                abort_provider_task(
+                    str(self._client.base_url), self._client.api_key)
+            except Exception:
+                pass
 
         if cancel:
             cancel.bind_closer(_cut_connection)

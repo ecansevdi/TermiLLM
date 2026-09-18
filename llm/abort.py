@@ -33,7 +33,7 @@ def abort_stream(stream) -> None:
 
 def abort_provider_task(api_base_url: str, api_key: str = None) -> None:
     """llama.cpp /abort varsa çağır. Olmayan sağlayıcıda sessizce geç."""
-    origin = _strip_version(api_base_url or "")
+    origin = _strip_version(str(api_base_url or ""))
     if not origin:
         return
     headers = {"Content-Type": "application/json"}
