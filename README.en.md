@@ -7,8 +7,9 @@ An open-ended LLM chat agent for the terminal, written in Python. It talks to a 
 Other highlights:
 
 - **Web search agent** — When needed, the model writes a `<web_search>query</web_search>` tag in its answer; the program runs the search (SearXNG or Tavily), feeds the results back to the model, and keeps looping until a plain answer arrives (up to 6 rounds).
-- **Voice input** — `/ses` records the microphone (arecord) and transcribes it with whisper.cpp; `/ses <file>` transcribes an audio file. Text can also be injected from an external script through a named pipe.
-- **File and image attachments** — Text files can be attached; with `/resim`, an image is sent multimodally (vision) along with your next message.
+- **File, image, and audio attachments** — Typing `@file` on the prompt opens a picker; text, images (`.png` `.jpg` …), or audio (`.wav` `.mp3` …) can be attached while you keep writing on the same line. Audio files are transcribed with Whisper. Live microphone input still goes through the named pipe (`whisper_dinle.sh`).
+- **Inline web search** — `?"query"` searches on the same prompt line; `/ara` stores results for the next message. The model can also issue `<web_search>` itself.
+- **Abort a reply** — **Ctrl+X** (or Ctrl+C during generation) stops the current turn without quitting; the HTTP socket is shut down so llama-server stops producing tokens.
 - **Session management** — Each conversation lives in its own folder under `chats/` (history, title, token log); on startup the most recent session is loaded automatically.
 
 ---
@@ -44,8 +45,8 @@ base_url=http://127.0.0.1:8080/v1
 api_key=sk-...
 ```
 
-- `SERVER_BASE` — used to discover the context size via the `/props` and `/slots` endpoints.
-- `base_url` — full address of the OpenAI-compatible chat endpoint (e.g. `SERVER_BASE/v1`).
+- `SERVER_BASE` — used for local context-size discovery (llama.cpp `/props`).
+- `base_url` — full address of the OpenAI-compatible chat endpoint (e.g. `SERVER_BASE/v1`, `https://api.x.ai/v1`, OpenRouter, OrcaRouter).
 - `api_key` — ignored by llama.cpp server; a real key for remote services.
 
 Optional environment variables:
@@ -55,6 +56,8 @@ WHISPER_BIN=whisper-cli                          # path to the whisper.cpp binar
 WHISPER_MODEL=~/whisper.cpp/models/ggml-base.bin # GGML model file
 WHISPER_LANG=tr                                  # transcription language
 LLAMA_PIPE=/tmp/llama_input.pipe                 # named pipe path
+CONTEXT_PROVIDER=llamacpp                        # force: llamacpp | openrouter | orcarouter | xai | openai | anthropic | claude
+CONTEXT_FALLBACK=4096                            # used if discovery fails
 ```
 
 Run:
@@ -98,26 +101,44 @@ The program runs as a REPL: you type a message at the `Sen:` prompt (Turkish for
 | `/stats` | Message count, context tokens, total input/output tokens |
 | `/debug` | Toggle debug mode (raw stream chunks are written to `debug.log`) |
 | `/help` | Command list |
+| `Ctrl+X` | Abort the reply (app stays open; Ctrl+C during generation does the same) |
 | `q` / `quit` | Exit |
 
-### Media commands
+### Media — `@` (inline)
+
+`/read`, `/dosya`, `/ses`, and `/resim` are gone. Typing `@` on the prompt opens a file box; after picking a file you **keep writing on the same line**.
+
+```text
+Sen: @readme.md summarize this
+Sen: @photo.png describe this image
+Sen: @speech.wav transcribe this
+Sen: @main.py @config.py compare these
+```
+
+| Key | Action |
+|---|---|
+| ↑ ↓ / Tab | move the selection |
+| Enter | attach a file; enter a directory |
+| `../` | go up one directory |
+| Esc | close the box |
+| + / − | grow / shrink the box |
+
+Paths: `@src/`, `@../`, `@~/`, `@/abs/path/`. Names with spaces: `@"my file.txt"`.
+
+- **images** `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` — vision model required
+- **audio** `.wav` `.mp3` `.flac` `.ogg` `.m4a` `.opus` — transcribed with Whisper
+- **other** — loaded as text
+
+**Attachment flow:** Selected content stays in memory (`📎 N ek bellekte bekliyor`) and is sent with the prompt. Empty Enter sends it with “please examine the attached content.” Images travel as base64 only to the model; history stores `[Resim: filename]`.
+
+### Search
 
 | Command | Description |
 |---|---|
-| `/ses` | Record the microphone (stop with **Enter**), transcribe with Whisper, attach |
-| `/ses <file>` | Transcribe an audio file (`.wav`) and attach it |
-| `/read <file>` or `/dosya <file>` | Read a text file and attach it |
-| `/resim <file>` | Attach an image (requires a vision-capable model) |
-
-**Attachment flow:** `/ses`, `/read`, and `/resim` do not send anything immediately; content is held in memory and the prompt shows `📎 N ek bellekte bekliyor` ("N attachments pending"). It is sent together with your next message; pressing Enter on an empty line sends it with the request "Please examine the attached content in detail." Images travel as base64 only on their way to the model; the persistent history keeps a textual `[Resim: filename]` representation (so history.json stays small).
-
-### Search commands
-
-| Command | Description |
-|---|---|
-| `/ara <query>` or `/search <query>` | Forced search: search the web first, then send results + query to the model |
-| `/arama` | Search settings menu: provider selection, SearXNG URL/language/safesearch/categories, Tavily base URL and API key, result count, connection test |
-| *(automatic)* | The model issues `<web_search>` calls itself on questions that need up-to-date information |
+| `?"query"` | Search inline; the rest of the line is the prompt (`?"python 3.14" summarize this`) |
+| `/ara <query>` or `/search <query>` | Search the web and store results (sent with the next message) |
+| `/arama` | Search settings: SearXNG / Tavily, language, result count, connection test |
+| *(automatic)* | The model issues `<web_search>` itself when it needs up-to-date information |
 
 **Agent loop:** When a `<web_search>query</web_search>` tag appears in the model's answer, the stream is cut off at that point, the query runs, and the results are fed back to the model as a `"--- Web Arama Sonuçları ---"` (web search results) block; the model's reply is streamed again. This continues until the model answers plainly or the 6-round limit (`MAX_SEARCH_ROUNDS`) is reached. The model is instructed to cite source URLs when relying on search results.
 
@@ -127,7 +148,7 @@ The program runs as a REPL: you type a message at the `Sen:` prompt (Turkish for
 
 ### Context management
 
-- At startup the context size is read from `SERVER_BASE/props`, then `SERVER_BASE/slots` (`n_ctx`); if both fail it falls back to 4096 with a warning.
+- At startup the context size is read from the provider behind `base_url`: llama.cpp (`n_ctx` in `/props`), OpenRouter / OrcaRouter / xAI (`context_length`), Anthropic (`max_input_tokens`). Official OpenAI `/v1/models` does not expose context; the OpenRouter catalog is used as a fallback. If all fail, `CONTEXT_FALLBACK` (default 4096) is used.
 - The usable budget is `n_ctx × 0.85` (safety margin); a colored context bar is shown each turn in the REPL (green < 60%, yellow < 85%, red above).
 - When the budget is exceeded, history is trimmed in **user/assistant pairs** (oldest first); conversation ordering is never broken.
 - Token statistics use the server's real usage values; if the server reports none, an approximate value (characters/4) is shown with a `~` marker.
@@ -147,7 +168,7 @@ The newest session loads automatically on startup. The formats are plain JSON/te
 ### Audio and pipe integration
 
 - Microphone audio is captured as 16 kHz mono WAV via `arecord`, passed to Whisper, and the temp file is deleted.
-- A named pipe at `LLAMA_PIPE` (default `/tmp/llama_input.pipe`) is watched: if an external script (e.g. your own Whisper listening script) writes text to the pipe, it is auto-inserted into the prompt as a readline prefill — press Enter to send. Example external script:
+- A named pipe at `LLAMA_PIPE` (default `/tmp/llama_input.pipe`) is watched: if an external script (e.g. your own Whisper listening script) writes text to the pipe, it is inserted into the prompt — press Enter to send. Example external script:
 
 ```bash
 #!/usr/bin/env bash
@@ -176,17 +197,19 @@ TermiLLM/
 ├── commands/
 │   ├── router.py            # routes input to command classes
 │   ├── session_commands.py  # /new /chats /open /rename /delete /clear
-│   ├── media_commands.py    # /ses /read /dosya /resim
 │   ├── search_commands.py   # /ara /search /arama
 │   └── system_commands.py   # /stats /debug /help
 ├── chat/
 │   ├── service.py           # message flow + agent search loop
 │   ├── context.py           # token estimation, trimming, message building
-│   └── attachments.py       # pending text/image attachments
+│   ├── attachments.py       # pending text/image attachments
+│   └── mentions.py          # @file and ?"query" parsing
 ├── llm/
 │   ├── client.py            # OpenAI-compatible stream call
 │   ├── stream.py            # <think>/<web_search> parser, StreamResult
-│   └── server_info.py       # n_ctx discovery (/props, /slots)
+│   ├── server_info.py       # context discovery (llamacpp, openrouter, xai, …)
+│   ├── cancel.py            # abort turn with Ctrl+X / SIGINT
+│   └── abort.py             # socket shutdown + llama-server /abort
 ├── sessions/
 │   ├── manager.py           # application-level session behavior
 │   └── storage.py           # disk operations (history/metadata/token log)
@@ -194,7 +217,7 @@ TermiLLM/
 │   ├── audio.py             # whisper.cpp transcription + arecord recording
 │   ├── files.py             # text file loading
 │   ├── images.py            # base64 data URI preparation
-│   └── pipe.py              # named pipe listener + readline prefill
+│   └── pipe.py              # named pipe listener
 ├── search/
 │   ├── service.py           # search coordination + result formatting
 │   ├── config.py            # search_config.json load/save
@@ -202,7 +225,11 @@ TermiLLM/
 ├── ui/
 │   ├── terminal.py          # prompt, context bar, help, stats, colors
 │   ├── markdown.py          # Markdown → ANSI converter (streaming)
-│   └── stream_renderer.py   # draws thinking/response stream to the terminal
+│   ├── stream_renderer.py   # draws thinking/response stream to the terminal
+│   ├── line_edit.py         # line editor (box on @)
+│   ├── picker.py            # file box (directory browsing)
+│   ├── completer.py         # path matching
+│   └── keys.py              # raw key reader
 ├── searxng/settings.yml     # for a local SearXNG instance (JSON format enabled)
 ├── search_config.json       # search settings (editable at runtime)
 ├── setup.sh                 # virtualenv + dependency setup

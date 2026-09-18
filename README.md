@@ -7,8 +7,9 @@ Terminalde çalışan, Python ile yazılmış açık uçlu bir LLM sohbet ajanı
 Diğer önemli yetenekleri:
 
 - **Web arama ajanı** — Model gerekirse yanıtında `<web_search>sorgu</web_search>` etiketi yazar; program aramayı çalıştırır (SearXNG veya Tavily), sonuçları modele geri besler ve düz cevap gelene dek döngüyü sürdürür (en fazla 6 tur).
-- **Sesli giriş** — `/ses` ile mikrofon kaydı (arecord) alınır ve whisper.cpp ile yazıya çevrilir; `/ses <dosya>` ile ses dosyası çevrilir. Harici bir betikten named pipe üzerinden de metin aktarılabilir.
-- **Dosya ve görsel ekleri** — Metin dosyaları eke alınabilir; `/resim` ile görsel, bir sonraki mesajla birlikte multimodal (vision) olarak modele gönderilir.
+- **Dosya, görsel ve ses ekleri** — Prompt satırında `@dosya` yazınca bir kutu açılır; metin, resim (`.png` `.jpg` …) veya ses (`.wav` `.mp3` …) seçilir, aynı satırda yazmaya devam edilir. Ses dosyaları Whisper ile yazıya çevrilir. Canlı mikrofon için named pipe (`whisper_dinle.sh`) durur.
+- **Satır içi web arama** — `?"sorgu"` aynı prompt’ta arama yapar; `/ara` sonucu belleğe alır. Model ayrıca gerekirse kendisi `<web_search>` çağırır.
+- **Yanıtı kesme** — Üretim sırasında **Ctrl+X** (veya Ctrl+C) turu keser; program kapanmaz, soket kapanır ki llama-server üretmeye devam etmesin.
 - **Oturum yönetimi** — Her sohbet `chats/` altında kendi klasöründe tutulur (geçmiş, başlık, token logu); program açılışta en son sohbeti otomatik yükler.
 
 ---
@@ -44,8 +45,8 @@ base_url=http://127.0.0.1:8080/v1
 api_key=sk-...
 ```
 
-- `SERVER_BASE` — context boyutu keşfi için `/props` ve `/slots` uçlarına erişimde kullanılır.
-- `base_url` — OpenAI-compatible chat endpoint'inin tam adresi (ör. `SERVER_BASE/v1`).
+- `SERVER_BASE` — yerelde context boyutu keşfi için kullanılır (llama.cpp `/props`).
+- `base_url` — OpenAI-compatible chat endpoint'inin tam adresi (ör. `SERVER_BASE/v1`, `https://api.x.ai/v1`, OpenRouter, OrcaRouter).
 - `api_key` — llama.cpp server'da yok sayılır; uzak servislerde gerçek anahtardır.
 
 İsteğe bağlı ortam değişkenleri:
@@ -55,6 +56,8 @@ WHISPER_BIN=whisper-cli                          # whisper.cpp binary yolu
 WHISPER_MODEL=~/whisper.cpp/models/ggml-base.bin # GGML model dosyası
 WHISPER_LANG=tr                                  # transkripsiyon dili
 LLAMA_PIPE=/tmp/llama_input.pipe                 # named pipe yolu
+CONTEXT_PROVIDER=llamacpp                        # zorla: llamacpp | openrouter | orcarouter | xai | openai | anthropic | claude
+CONTEXT_FALLBACK=4096                            # keşif başarısızsa
 ```
 
 Çalıştırma:
@@ -98,25 +101,43 @@ Program bir REPL olarak çalışır: `Sen:` prompt'una mesaj yazarsınız, yanı
 | `/stats` | Mesaj sayısı, context token'ı, toplam giriş/çıkış token'ı |
 | `/debug` | Debug modunu aç/kapat (ham stream parçaları `debug.log`'a yazılır) |
 | `/help` | Komut listesi |
+| `Ctrl+X` | Yanıtı kes (program açık kalır; üretim sırasında Ctrl+C de aynı) |
 | `q` / `quit` | Çıkış |
 
-### Medya komutları
+### Medya — `@` (satır içi)
+
+`/read`, `/dosya`, `/ses` ve `/resim` yoktur. Prompt’ta `@` yazınca dosya kutusu açılır; seçimden sonra **aynı satırda yazmaya devam edilir**.
+
+```text
+Sen: @readme.md şunu özetle
+Sen: @foto.png bu resmi açıkla
+Sen: @konusma.wav bunu yazıya dök
+Sen: @main.py @config.py karşılaştır
+```
+
+| Tuş | İş |
+|---|---|
+| ↑ ↓ / Tab | seçimi gez |
+| Enter | dosyayı ekle; klasörse içine gir |
+| `../` | üst dizine çık |
+| Esc | kutuyu kapat |
+| + / − | kutuyu büyüt / küçült |
+
+Yollar: `@src/`, `@../`, `@~/`, `@/abs/yol/`. Boşluklu ad: `@"benim dosya.txt"`.
+
+- **resim** `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` — vision model gerekir
+- **ses** `.wav` `.mp3` `.flac` `.ogg` `.m4a` `.opus` — Whisper ile yazıya çevrilir
+- **diğer** — metin olarak okunur
+
+**Ek akışı:** Seçilen içerik bellekte bekler (`📎 N ek bellekte bekliyor`) ve prompt ile birlikte gider. Boş Enter, eki “ekteki içeriği incele” talebiyle gönderir. Görsel yalnızca modele giderken base64 taşınır; geçmişte `[Resim: dosyaadı]` kalır.
+
+### Arama
 
 | Komut | Açıklama |
 |---|---|
-| `/ses` | Mikrofonu kaydet (**Enter** ile durdur), Whisper ile çevir, eke al |
-| `/ses <dosya>` | Ses dosyasını (`.wav`) çevirip eke al |
-| `/read <dosya>` veya `/dosya <dosya>` | Metin dosyasını okuyup eke al |
-| `/resim <dosya>` | Görseli eke al (vision destekli model gerekir) |
-
-**Ek akışı:** `/ses`, `/read`, `/resim` içeriği hemen göndermez; bellekte bekletir ve prompt üzerinde `📎 N ek bellekte bekliyor` gösterir. Sonraki mesajınızla birlikte gönderilir; boş Enter basarsanız eki "Lütfen ekteki içeriği detaylıca incele." talebiyle gönderir. Görsel eki yalnızca modele giderken base64 olarak taşınır; kalıcı geçmişte `[Resim: dosyaadı]` metin temsili saklanır (history.json'un şişmemesi için).
-
-### Arama komutları
-
-| Komut | Açıklama |
-|---|---|
-| `/ara <sorgu>` veya `/search <sorgu>` | Zorunlu arama: önce web'de ara, sonuçları + sorguyu modele gönder |
-| `/arama` | Arama ayar menüsü: sağlayıcı seçimi, SearXNG URL/dil/güvenli arama/kategori, Tavily base URL ve API key, sonuç sayısı, bağlantı testi |
+| `?"sorgu"` | Satır içinde web ara; kalan metin prompt’tur (`?"python 3.14" bunu özetle`) |
+| `/ara <sorgu>` veya `/search <sorgu>` | Web ara, sonucu belleğe al (sonraki mesajla gider) |
+| `/arama` | Arama ayar menüsü: SearXNG / Tavily, dil, sonuç sayısı, bağlantı testi |
 | *(otomatik)* | Model, güncel bilgi gerektiren sorularda kendisi `<web_search>` çağrısı yapar |
 
 **Ajan döngüsü:** Model yanıtı içinde `<web_search>sorgu</web_search>` görüldüğünde stream o noktada durdurulur, sorgu çalıştırılır, sonuçlar `"--- Web Arama Sonuçları ---"` bloğu halinde modele geri verilir ve model yanıtı yeniden akıtılır. Model düz cevap verene veya 6 tur limitine (`MAX_SEARCH_ROUNDS`) ulaşana dek devam eder. Arama sonuçlarına dayanırken kaynak URL'ler modele istenir.
@@ -127,7 +148,7 @@ Program bir REPL olarak çalışır: `Sen:` prompt'una mesaj yazarsınız, yanı
 
 ### Context yönetimi
 
-- Açılışta context boyutu önce `SERVER_BASE/props`, ardından `SERVER_BASE/slots` uçlarından okunur (`n_ctx`); ikisi de başarısız olursa 4096'ya düşer ve uyarı gösterilir.
+- Açılışta context boyutu `base_url` üzerinden sağlayıcıdan okunur: llama.cpp (`/props` içindeki `n_ctx`), OpenRouter / OrcaRouter / xAI (`context_length`), Anthropic (`max_input_tokens`). Resmi OpenAI `/v1/models` context vermez; OpenRouter kataloğu yedek kaynaktır. Hepsi başarısızsa `CONTEXT_FALLBACK` (varsayılan 4096) kullanılır.
 - Kullanılabilir bütçe `n_ctx × 0.85` (güvenlik payı) olarak hesaplanır; REPL'de her turda renkli bir context çubuğu gösterilir (yeşil < %60, sarı < %85, kırmızı üstü).
 - Bütçe aşılırsa geçmiş **user/assistant çiftleri halinde** (en eskiden) kırpılır; konuşma sıralaması bozulmaz.
 - Token istatistikleri server gerçek usage değerlerini kullanır; server bildirmezse `~` işaretiyle yaklaşık değer (karakter/4) gösterilir.
@@ -147,7 +168,7 @@ Açılışta en yeni oturum otomatik yüklenir. Format düz JSON/metindir; oturu
 ### Ses ve pipe entegrasyonu
 
 - Mikrofon kaydı 16 kHz mono WAV olarak `arecord` ile alınır, Whisper'a verilir, geçici dosya silinir.
-- `LLAMA_PIPE` (varsayılan `/tmp/llama_input.pipe`) üzerindeki bir named pipe dinlenir: harici bir betik pipe'a metin yazarsa (ör. kendi Whisper dinleme betiğiniz) metin readline prefill olarak prompt'a otomatik doldurulur — Enter'a basıp gönderirsiniz. Örnek harici betik:
+- `LLAMA_PIPE` (varsayılan `/tmp/llama_input.pipe`) üzerindeki bir named pipe dinlenir: harici bir betik pipe'a metin yazarsa (ör. kendi Whisper dinleme betiğiniz) metin prompt'a doldurulur — Enter'a basıp gönderirsiniz. Örnek harici betik:
 
 ```bash
 #!/usr/bin/env bash
@@ -176,17 +197,19 @@ TermiLLM/
 ├── commands/
 │   ├── router.py            # girdiyi komut sınıflarına yönlendirir
 │   ├── session_commands.py  # /new /chats /open /rename /delete /clear
-│   ├── media_commands.py    # /ses /read /dosya /resim
 │   ├── search_commands.py   # /ara /search /arama
 │   └── system_commands.py   # /stats /debug /help
 ├── chat/
 │   ├── service.py           # mesaj akışı + ajan arama döngüsü
 │   ├── context.py           # token tahmini, kırpma, mesaj oluşturma
-│   └── attachments.py       # bekleyen metin/görsel ekleri
+│   ├── attachments.py       # bekleyen metin/görsel ekleri
+│   └── mentions.py          # @dosya ve ?"sorgu" ayrıştırma
 ├── llm/
 │   ├── client.py            # OpenAI-compatible stream çağrısı
 │   ├── stream.py            # <think>/<web_search> ayrıştırıcı, StreamResult
-│   └── server_info.py       # n_ctx keşfi (/props, /slots)
+│   ├── server_info.py       # context keşfi (llamacpp, openrouter, xai, …)
+│   ├── cancel.py            # Ctrl+X / SIGINT ile tur iptali
+│   └── abort.py             # soket kapatma + llama-server /abort
 ├── sessions/
 │   ├── manager.py           # uygulama seviyesi oturum davranışı
 │   └── storage.py           # disk işlemleri (history/metadata/token log)
@@ -194,7 +217,7 @@ TermiLLM/
 │   ├── audio.py             # whisper.cpp transkripsiyonu + arecord kaydı
 │   ├── files.py             # metin dosyası yükleme
 │   ├── images.py            # base64 data URI hazırlama
-│   └── pipe.py              # named pipe dinleyici + readline prefill
+│   └── pipe.py              # named pipe dinleyici
 ├── search/
 │   ├── service.py           # arama koordinasyonu + sonuç biçimlendirme
 │   ├── config.py            # search_config.json yükleme/kaydetme
@@ -202,7 +225,11 @@ TermiLLM/
 ├── ui/
 │   ├── terminal.py          # prompt, context bar, yardım, istatistik, renkler
 │   ├── markdown.py          # Markdown → ANSI dönüştürücü (streaming)
-│   └── stream_renderer.py   # düşünme/yanıt akışını terminale çizer
+│   ├── stream_renderer.py   # düşünme/yanıt akışını terminale çizer
+│   ├── line_edit.py         # satır editörü (@ yazınca kutu)
+│   ├── picker.py            # dosya kutusu (dizin gezme)
+│   ├── completer.py         # yol eşleştirme
+│   └── keys.py              # ham tuş okuma
 ├── searxng/settings.yml     # yerel SearXNG örneği için (json formatı etkin)
 ├── search_config.json       # arama ayarları (çalışırken düzenlenebilir)
 ├── setup.sh                 # sanal ortam + bağımlılık kurulumu
