@@ -22,8 +22,8 @@ Giriş modu: setcbreak — echo/canonical kapalı; OPOST (\\n → CRLF) ve ISIG
 Satır modeli:
   * feed_print(): gelen akışı \\n'e göre satırlara böler; tamamlanan her satır
     _seen'e (statik) eklenir.
-  * Tamamlanmamış satır (end="" yazımlar) pencerenin son satırında canlı
-    gösterilir.
+  * Ekran genişliğini aşan canlı satır, \\n beklenmeden alt satıra alınır.
+  * Kalan parça pencerenin son satırında canlı gösterilir.
   * _draw_window(): görünen son satırları ÜSTTEN hizalı şekilde absolu
     konumla yeniden çizer (klasik terminal akışı); balonlar (kind=2) koyu
     gri zeminli çizilir.
@@ -412,6 +412,8 @@ class Page:
             for piece in wrap_ansi(line, self._cols):
                 self._seen.append((piece, self.PLAIN))
             committed = True
+        if self._commit_overflow():
+            committed = True
         self._trim_seen()
         if self._scroll_offset > 0:
             return  # kullanıcı geçmişe bakıyor; görünüm dondurulur
@@ -419,6 +421,23 @@ class Page:
             self._draw_window()
         else:
             self._draw_window(throttle=True)
+
+    def _commit_overflow(self) -> bool:
+        """Canlı satır ekrandan genişse dolu satırları hemen sabitle.
+
+        Sarma yalnız \\n gelince yapılınca, sığmayan metin tamponda bekleyip
+        satır sonunda birden beliriyordu.
+        """
+        width = self._cols
+        if width <= 0 or visible_width(self._print_buf) <= width:
+            return False
+        pieces = wrap_ansi(self._print_buf, width)
+        if len(pieces) <= 1:
+            return False
+        for piece in pieces[:-1]:
+            self._seen.append((piece, self.PLAIN))
+        self._print_buf = pieces[-1]
+        return True
 
     def flush_print(self):
         """Tamamlanmamış satır dahil pencereyi hemen çiz."""

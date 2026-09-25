@@ -121,8 +121,8 @@ saat 14:33
 | **Üst çubuk (sabit)** | En sağda: yüzde + **beyaz** doluluk barı + `harcanan / context size` (her turdan sonra güncellenir) |
 | **İçerik alanı** | Mesajlar klasik terminal akışıyla **yukarıdan aşağıya** yazılır; ekran dolunca en eski satır tepeden kayar |
 | **Giriş kutusu (sabit, altta)** | Koyu gri zemin, beyaz çizgiler; metin kutunun ortasında, her taraftan boşluklu; içeriğe göre büyür (5–16 satır) |
-| **Kullanıcı balonu** | Gönderilen her mesaj çizgisiz koyu gri kutuda, üst/alt boşluklu gösterilir; altında `saat HH:MM` damgası |
-| **Model cevabı** | Canlı akar; bittiğinde altında token istatistiği (`↳ … tok/s`) ve `saat HH:MM` damgası basılır |
+| **Kullanıcı balonu** | Gönderilen her mesaj çizgisiz koyu gri kutuda, `>` ile başlar; altında `saat HH:MM` damgası |
+| **Model cevabı** | Canlı akar. Satır ekrana sığmayınca alt satıra **hemen** geçer; satır sonu beklenmez. Bittiğinde altında token istatistiği (`↳ … tok/s`) ve `saat HH:MM` damgası basılır |
 | **Kod blokları / alıntılar** | Markdown formatter, kod bloklarını ve `>` alıntılarını satırı sonuna kadar dolduran **koyu gri zeminle** çizer |
 | **Overlay'ler** | `/help`, `/stats`, `/chats` çıktısı kutunun üstünde açılır; **herhangi bir tuşta** kapanır (uzunsa tuş tuş sayfalama) |
 
@@ -292,6 +292,7 @@ Yollar: `@src/`, `@../`, `@~/`, `@/abs/yol/`. Boşluklu ad: `@"benim dosya.txt"`
 - Terminal `cbreak` moduna alınır; ICRNL kapatılarak `Enter` CR olarak okunur (gönder), `Ctrl+J` LF kalır (yeni satır). OPOST ve ISIG açık kalır: `\n` çıktısı bozulmaz, Ctrl+C/SIGINT çalışır.
 - Mouse tracking **hiç açılır** (uygulama fare olaylarını yakalamaz): metin seçimi terminalin native davranışıdır. Tekerlek için `?1007h` (alternate scroll) açılır — alt ekranda tekerlek `↑`/`↓` ok tuşlarına çevrilir ve sohbet kaydırmasına bağlanır.
 - Geçmiş tamponu 5000 satır tutar; fare ile geçmişe bakarken canlı akış görünümü kaydırmaz.
+- Model satır sonu göndermeden uzun yazarsa, ekran genişliğini aşan kısım o anda alt satıra alınır. Taşan metin tamponda birikip satır sonunda toplu görünmez.
 
 ### Oturum deposu
 
@@ -399,4 +400,4 @@ Katmanlar tek yönlü bağımlıdır: `ui` ← `commands/chat` ← `sessions/llm
 python -m unittest discover -s tests   # veya: python -m pytest tests/
 ```
 
-Testler `chat/mentions`, `ui/completer`, `ui/picker`, `llm/cancel`, `llm/server_info`, `llm/abort`, effort zinciri (`test_ctrlp_chain`, `test_reasoning`), reasoning akışı (`test_reasoning_stream`) ve reasoning rengini (`test_reasoning_color`) kapsar; ağ ve tty gerektirmez.
+Testler `chat/mentions`, `ui/completer`, `ui/picker`, `llm/cancel`, `llm/server_info`, `llm/abort`, effort zinciri (`test_ctrlp_chain`, `test_reasoning`), reasoning akışı (`test_reasoning_stream`), reasoning rengini (`test_reasoning_color`) ve canlı satır sarmayı (`test_page_wrap`) kapsar; ağ ve tty gerektirmez.

@@ -85,7 +85,7 @@ docker run -d --name searxng -p 9090:8080 \
 
 ## Usage & Commands
 
-The program runs as a REPL: you type a message at the `Sen:` prompt (Turkish for "You"), and the answer streams in under the `Ajan:` ("Agent") header, followed by token statistics (`↳ input: … tok │ output: … tok │ total: … tok │ 24.3 tok/s (server)`).
+The program runs as a REPL: you type a message at the `Sen:` prompt (Turkish for "You"), and the answer streams in under the `Ajan:` ("Agent") header, followed by token statistics (`↳ input: … tok │ output: … tok │ total: … tok │ 24.3 tok/s (server)`). A sent message is shown in a gray box starting with `>`. While the model streams, a line that no longer fits the screen wraps onto the next row immediately; it does not wait for a newline and then appear all at once.
 
 ### Session commands
 
