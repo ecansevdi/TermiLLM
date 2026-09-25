@@ -54,7 +54,8 @@ _MAX_HISTORY = 5000    # geçmiş tamponu sınırı (satır)
 _SCROLL_STEP = 3       # tekerlek/ok tuşu adımı (satır)
 
 # Canonical reasoning effort seviyeleri (llm/reasoning.py ile aynı küme)
-_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+# "auto" provider'a gitmez; state'te None olarak durur.
+_EFFORT_LEVELS = ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"]
 EFFORT_LEVELS = _EFFORT_LEVELS     # dış kullanım
 
 
@@ -174,7 +175,7 @@ class Page:
         self._cursor_col = 0
         self._view_top = 0
 
-        # Reasoning efor göstergesi. None = kullanıcı seçmedi (provider default).
+        # Reasoning efor. None = auto (explicit override yok).
         self._effort = None
         self._effort_cb = None          # seçim yapıldığında çağrılır
         self._hint_row = None           # efor ipucu satırı (ekran satırı)
@@ -350,19 +351,7 @@ class Page:
         # Efor ipucu satırı: kutunun HEMEN üstünde (ekran satırı=h)
         # üst çubukla kutu arasına yerleşir; _paint_all burayı da siler/çizer.
         top_row = self._rows - h + 1 - 1              # kutu üst çizgisinin üstü
-        level = self._effort
-        if not level:
-            hint_text = f" Ctrl+P efor: {FG_WHITE}{BOLD}provider default{BOLD_RESET}"
-        else:
-            items = []
-            for it in _EFFORT_LEVELS:
-                if it == level:
-                    items.append(f"{FG_WHITE}{BOLD}[{it}]{BOLD_RESET}")
-                else:
-                    items.append(f"{DIM}{it}{RESET}{BG_BLACK}")
-            hint_text = f" Ctrl+P efor: " + " · ".join(items)
-        if self._effort_note:
-            hint_text += f"{DIM}  — {self._effort_note}{RESET}{BG_BLACK}"
+        hint_text = f" {FG_WHITE}{BOLD}{self._effort_hint()}{BOLD_RESET}"
         pad = max(0, cols - visible_width(hint_text) - 1)
         self._hint_row = top_row
         self._keep_bottom.append(f"{' ' * pad}{hint_text}")
@@ -690,7 +679,12 @@ class Page:
         satır BALLOON_STAMP türündedir: sağ kenarda saat hücresi taşır.
         """
         now = clock.now_str()   # mesajın GİRİLDİĞİ andeki saat
-        body = self._wrap(text, max(8, self._cols - 11))
+        width = max(8, self._cols - 11)
+        body = self._wrap(text or "", max(4, width - 2))
+        if not body:
+            body = [">"]
+        else:
+            body[0] = "> " + body[0] if body[0] else ">"
         self.queue_line("", self.BALLOON)             # üst iç boşluk (gri)
         for i, ln in enumerate(body):
             if i == len(body) - 1:
@@ -744,8 +738,23 @@ class Page:
         out.write(f"\033[{crow};{ccol}H")
         out.flush()
 
+    def _effort_hint(self) -> str:
+        """Efor: auto | Efor: high | Efor: xhigh → high | Efor: high → unsupported.
+
+        Auto iken sağlayıcının varsayılan seviyesi tahmin edilmez.
+        """
+        if not self._effort:
+            return "Efor: auto"
+        note = self._effort_note or ""
+        if "unsupported" in note.lower():
+            return f"Efor: {self._effort} → unsupported"
+        match = re.search(r"\b([a-z]+)\s*→\s*([a-z]+)\b", note)
+        if match:
+            return f"Efor: {match.group(1)} → {match.group(2)}"
+        return f"Efor: {self._effort}"
+
     def set_effort(self, level: str):
-        """Efor göstergesini günceller. None/boş = provider default."""
+        """Efor göstergesini günceller. None/auto = explicit override yok."""
         if level in (None, "", "auto"):
             if self._effort is None:
                 return
@@ -753,7 +762,7 @@ class Page:
             if self.active:
                 self._paint_all()
             return
-        if level not in _EFFORT_LEVELS or level == self._effort:
+        if level not in _EFFORT_LEVELS or level == "auto" or level == self._effort:
             return
         self._effort = level
         if self.active:
@@ -790,11 +799,11 @@ class Page:
             tty.setcbreak(fd)
         except termios.error:
             old = None
-        # Seçim yokken imleç high'da durur; Enter'a basılmadan state değişmez.
+        # None menüde auto satırıdır. Enter'a basılmadan state değişmez.
         if self._effort in _EFFORT_LEVELS:
             idx = _EFFORT_LEVELS.index(self._effort)
         else:
-            idx = _EFFORT_LEVELS.index("high")
+            idx = 0
         top = self._keep_rows_top + 1
         try:
             # Tek-ekran ilkesi: efor listesi açılmadan önceki içerik temizlenir
@@ -831,11 +840,13 @@ class Page:
                     termios.tcsetattr(fd, termios.TCSADRAIN, old)
                 except termios.error:
                     pass
-        if level != self._effort:
-            self.set_effort(level)
+        # "auto" provider alanı değildir; state'te None kalır.
+        chosen = None if level == "auto" else level
+        if chosen != self._effort:
+            self.set_effort(chosen)
         if self._effort_cb:
             try:
-                self._effort_cb(level)
+                self._effort_cb(chosen)
             except Exception:
                 pass
         self._draw_window(force=True)

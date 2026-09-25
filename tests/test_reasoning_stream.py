@@ -474,12 +474,21 @@ class TestDefaultEffort(unittest.TestCase):
         page._cols, page._rows = 100, 24
         page._build_input_box()
         blob = "\n".join(page._keep_bottom)
-        self.assertIn("provider default", blob)
+        self.assertIn("Efor: auto", blob)
         page.set_effort("high")
         page._build_input_box()
         blob = "\n".join(page._keep_bottom)
-        self.assertIn("[high]", blob)
-        self.assertNotIn("provider default", blob)
+        self.assertIn("Efor: high", blob)
+        self.assertNotIn("Efor: auto", blob)
+        page.set_effort("xhigh")
+        page.set_effort_note("Gemini/model limiti: xhigh→high")
+        page._build_input_box()
+        blob = "\n".join(page._keep_bottom)
+        self.assertIn("Efor: xhigh → high", blob)
+        page.set_effort_note("unsupported (400, omitted)")
+        page._build_input_box()
+        blob = "\n".join(page._keep_bottom)
+        self.assertIn("Efor: xhigh → unsupported", blob)
 
 
 class TestOutputFormat(unittest.TestCase):

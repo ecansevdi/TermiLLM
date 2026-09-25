@@ -139,7 +139,7 @@ saat 14:33
 | **Fare tekerleği ↑↓** (veya `↑ ↓`/`PgUp PgDn`, boş girdi kutusunda) | Geçmişe kaydırma (sağ üstte `↑N` göstergesi); en alta dönünce canlı akış sürer |
 | **Fare sol tuş + sürükleme** | Terminalin **kendi native seçimi** — normal metin gibi seç, kopyala, yapıştır |
 | `Ctrl+O` | **Providers menüsü** (İngilizce): Select Provider (`/` REGEX arama, `d` silme) / Enter API / **Quick Add Provider** — model listesi `GET /models`'ten çekilir; kayıtlar `~/.config/termillm/config.toml`'a yazılır, seçim anında etkinleşir. Sonrasında effort sorulur. Quick Add: 15 hazır sağlayıcı (OpenRouter, Cerebras, Groq, Together, Mistral, DeepSeek, xAI, Fireworks, OpenAI, Gemini, Claude, OpenCode Zen/Go, Ollama, LM Studio) — yalnızca API key girilir (model seçimi Select Provider'dan). API key'ler **şifreli** saklanır (`enc1:`, makineye bağlı gizli ile; `~/.termillm_salt`) |
-| `Ctrl+P` | **Effort seçimi.** Açılışta seçim yoktur (`provider default`): isteğe effort alanı konmaz. Seçenekler `none · minimal · low · medium · high · xhigh · max`. Seçim sağlayıcı değişince korunur |
+| `Ctrl+P` | **Effort seçimi.** Açılış `auto`: explicit effort gitmez. Seçenekler `auto · none · minimal · low · medium · high · xhigh · max`. `auto` ile `none` farklıdır. Seçim (auto dahil) sağlayıcı değişince korunur |
 | `q` / `quit` | Çıkış |
 
 > **Seçim notu:** Uygulama fare olaylarını yakalamaz (mouse tracking modu açılmaz); metin seçimi ve kopyalama tamamen terminalin native davranışıdır — hangi tuş kombinasyonunu kullanıyorsan normal terminal metninde nasıl çalışıyorsa burada da öyle çalışır.
@@ -150,19 +150,31 @@ saat 14:33
 
 ## Reasoning Effort (Ctrl+P)
 
-Açılışta effort seçilmemiştir (`reasoning_effort` boş). İstek gövdesine
-`reasoning_effort`, `reasoning` veya `output_config` **konmaz**; model
-sağlayıcının kendi varsayılanını kullanır. Kutu üstündeki ipucu
-`Ctrl+P efor: provider default` der.
+Varsayılan **`auto`**. TermiLLM explicit reasoning effort **göndermez**;
+provider/model kendi varsayılanını kullanır. İç temsil `None`'dır.
+İstek gövdesine `reasoning_effort`, `reasoning.effort` veya
+`output_config.effort` konmaz. `reasoning_effort="auto"` diye bir API
+değeri de gönderilmez. `auto` seçildiği için `enable_thinking=false`
+eklenmez. İpucu yalnız `Efor: auto` der; sağlayıcının varsayılan
+seviyesi tahmin edilmez.
 
-`Ctrl+P` ile canonical bir seviye seçilir:
-`none · minimal · low · medium · high · xhigh · max`
+`none` bundan farklıdır: reasoning'i **explicit kapatma** isteğidir ve
+yalnız provider/model destekliyorsa uygulanır (ör. llama.cpp'de
+`enable_thinking=false`).
 
-Seçilen değer, aktif `sağlayıcı + model + API türü`ne göre
-`llm/reasoning.py` içinde gerçek API alanına çevrilir ve sağlayıcı
-değişince de durur. Bilinmeyen model adında parametre gönderilmez.
-İpucu satırı "istenen → gönderilen" farkını gösterebilir:
-`Gemini/model limiti: xhigh→high` gibi.
+`minimal` / `low` / `medium` / `high` / `xhigh` / `max` explicit
+canonical seviyelerdir. Adapter (`llm/reasoning.py`) bunları ilgili API
+formatına çevirir. Ctrl+P menüsü:
+
+`auto · none · minimal · low · medium · high · xhigh · max`
+
+Kullanıcı tekrar `auto` seçebilir. Seçim, `auto` dahil, sağlayıcı
+değişince korunur; adapter yalnız request biçimini değiştirir.
+Web arama döngüsü ve reasoning kaynaklı 400 retry bu tercihi değiştirmez
+(retry effortsüz gider, state `high` olarak kalır).
+
+İpucu: `Efor: high`. Seviye indirildiyse `Efor: xhigh → high`.
+Parametre reddedildiyse `Efor: high → unsupported`.
 
 | Sağlayıcı (model destekliyorsa) | Request alanı |
 |---|---|

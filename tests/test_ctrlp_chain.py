@@ -20,6 +20,7 @@ from state import ApplicationState  # noqa: E402
 from config import Config  # noqa: E402
 from ui.page import Page  # noqa: E402
 from llm.client import LLMClient  # noqa: E402
+from llm.reasoning import normalize_effort  # noqa: E402
 import llm.anthropic_transport as anthro  # noqa: E402
 
 
@@ -92,28 +93,28 @@ class TestCtrlPHandlerChain(unittest.TestCase):
     """1) Ctrl+P gerçek Page kod yoluyla state'i değiştiriyor mu?"""
 
     def test_ctrlp_selection_updates_runtime_state(self):
-        state = ApplicationState()          # seçim yok; picker imleci high'da
+        state = ApplicationState()          # auto / None
         page = _HeadlessPage()
         _wire(state, page)
 
-        keys = ["up", "enter"]              # imleç high(4) → up → medium
+        # auto(0) → none → minimal → low → medium
+        keys = ["down", "down", "down", "down", "enter"]
         import ui.page as P
         with mock.patch.object(P, "read_key", lambda fd, **k: keys.pop(0)), \
              mock.patch.object(P, "select") as fake_sel:
             fake_sel.select = lambda *a, **k: (True, 0, 0)
             page._pick_effort()
 
-        # 7 seviye: none(0) minimal(1) low(2) medium(3) high(4) xhigh(5) max(6)
-        # default 'high'(4) + up → 'medium'(3)
         self.assertEqual(page._effort, "medium")        # UI gösterimi
         self.assertEqual(state.reasoning_effort, "medium")  # MERKEZİ STATE
 
     def test_provider_switch_keeps_state(self):
         state = ApplicationState()
+        state.reasoning_effort = "high"
         page = _HeadlessPage()
         _wire(state, page)
 
-        keys = ["down", "enter"]            # high(4) → xhigh(5)
+        keys = ["down", "enter"]            # high → xhigh
         import ui.page as P
         with mock.patch.object(P, "read_key", lambda fd, **k: keys.pop(0)), \
              mock.patch.object(P, "select") as fake_sel:
@@ -281,6 +282,121 @@ class TestFallbackPreservesGlobalChoice(unittest.TestCase):
                       reasoning_effort=state.reasoning_effort)
         self.assertEqual(client.calls[3]["extra_body"],
                          {"reasoning_effort": "high"})
+
+
+def _body_of(base: str, model: str, effort):
+    client = _CaptureClient(_cfg(base, model))
+    client._client.chat.completions.create = (
+        lambda **kw: client._openai_create_for_test(**kw))
+    client.stream([{"role": "user", "content": "hi"}],
+                  renderer=_FakeRenderer(), reasoning_effort=effort)
+    return client.calls[0]["extra_body"]
+
+
+class TestAutoIsNotNone(unittest.TestCase):
+    """auto (None) explicit override değildir; none kapatma isteğidir."""
+
+    def test_startup_is_auto(self):
+        self.assertIsNone(ApplicationState().reasoning_effort)
+        self.assertEqual(normalize_effort(None), "")
+        self.assertEqual(normalize_effort("auto"), "")
+        self.assertNotEqual(normalize_effort("auto"), "high")
+        self.assertEqual(normalize_effort("none"), "none")
+
+    def test_auto_openai_omits_effort(self):
+        body = _body_of("https://api.openai.com/v1", "gpt-5.2", None)
+        self.assertIsNone(body)
+        self.assertNotEqual(body, {"reasoning_effort": "auto"})
+
+    def test_auto_openrouter_omits_effort(self):
+        body = _body_of("https://openrouter.ai/api/v1", "openai/gpt-5", None)
+        self.assertTrue(body is None or "reasoning" not in (body or {}))
+
+    def test_auto_llamacpp_sends_neither_effort_nor_disable(self):
+        body = _body_of("http://127.0.0.1:8080/v1", "local", None)
+        self.assertIsNone(body)
+
+    def test_explicit_none_is_not_auto(self):
+        auto = _body_of("http://127.0.0.1:8080/v1", "local", None)
+        none = _body_of("http://127.0.0.1:8080/v1", "local", "none")
+        self.assertIsNone(auto)
+        self.assertEqual(none, {"chat_template_kwargs": {"enable_thinking": False}})
+
+    def test_explicit_high_payloads(self):
+        self.assertEqual(
+            _body_of("https://api.openai.com/v1", "gpt-5.2", "high"),
+            {"reasoning_effort": "high"})
+        self.assertEqual(
+            _body_of("https://openrouter.ai/api/v1", "openai/gpt-5", "high"),
+            {"reasoning": {"effort": "high"}})
+        self.assertEqual(
+            _body_of("http://127.0.0.1:8080/v1", "local", "high")["chat_template_kwargs"]["reasoning_effort"],
+            "high")
+        claude = anthro.build_payload("claude-sonnet-4-5",
+                                      [{"role": "user", "content": "hi"}],
+                                      effort="high")
+        self.assertEqual(claude["output_config"], {"effort": "high"})
+
+    def test_auto_claude_omits_output_config(self):
+        body = anthro.build_payload("claude-sonnet-4-5",
+                                    [{"role": "user", "content": "hi"}],
+                                    effort="")
+        self.assertNotIn("output_config", body)
+        self.assertNotIn("reasoning_effort", body)
+
+    def test_reset_back_to_auto(self):
+        client = _CaptureClient(_cfg("https://api.openai.com/v1", "gpt-5.2"))
+        client._client.chat.completions.create = (
+            lambda **kw: client._openai_create_for_test(**kw))
+        client.stream([{"role": "user", "content": "hi"}],
+                      renderer=_FakeRenderer(), reasoning_effort="high")
+        client.stream([{"role": "user", "content": "hi"}],
+                      renderer=_FakeRenderer(), reasoning_effort=None)
+        self.assertEqual(client.calls[0]["extra_body"], {"reasoning_effort": "high"})
+        self.assertIsNone(client.calls[1]["extra_body"])
+
+    def test_provider_switch_keeps_auto(self):
+        state = ApplicationState()
+        page = _HeadlessPage()
+        _wire(state, page)
+        page.set_effort_note("")
+        self.assertIsNone(state.reasoning_effort)
+        page.set_effort("high")
+        state.reasoning_effort = "high"
+        page.set_effort(None)
+        state.reasoning_effort = None
+        page.set_effort_note("")
+        self.assertIsNone(state.reasoning_effort)
+
+    def test_ctrlp_can_return_to_auto(self):
+        state = ApplicationState()
+        state.reasoning_effort = "high"
+        page = _HeadlessPage()
+        _wire(state, page)
+        # high'dan up: medium değil, liste auto...max; high'ın üstü medium
+        # auto'ya dönmek için high indeksinden yukarı yeterince.
+        # auto(0) none minimal low medium high(5) → 5 kez up
+        keys = ["up", "up", "up", "up", "up", "enter"]
+        import ui.page as P
+        with mock.patch.object(P, "read_key", lambda fd, **k: keys.pop(0)), \
+             mock.patch.object(P, "select") as fake_sel:
+            fake_sel.select = lambda *a, **k: (True, 0, 0)
+            page._pick_effort()
+        self.assertIsNone(state.reasoning_effort)
+        self.assertIsNone(page._effort)
+
+    def test_web_search_loop_auto_stays_unset(self):
+        state = ApplicationState()
+        client = _CaptureClient(_cfg("https://api.openai.com/v1", "gpt-5.2"))
+        client._client.chat.completions.create = (
+            lambda **kw: client._openai_create_for_test(**kw))
+        for _ in range(2):
+            client.stream([{"role": "user", "content": "hi"}],
+                          renderer=_FakeRenderer(),
+                          reasoning_effort=state.reasoning_effort)
+        self.assertIsNone(client.calls[0]["extra_body"])
+        self.assertIsNone(client.calls[1]["extra_body"])
+        self.assertIsNone(state.reasoning_effort)
 
 
 if __name__ == "__main__":

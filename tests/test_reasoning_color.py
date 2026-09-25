@@ -191,6 +191,30 @@ class TestReasoningBaseColor(unittest.TestCase):
         assert_reasoning_color(body.split("\n\n")[0])
 
 
+class TestUserBalloon(unittest.TestCase):
+    def test_message_box_starts_with_quote(self):
+        from ui.page import Page
+
+        page = Page("T")
+        page._cols = 80
+        page.show_user_message("merhaba dünya")
+        stamped = [ln for ln, kind in page._seen if kind == page.BALLOON_STAMP]
+        self.assertTrue(stamped)
+        self.assertTrue(stamped[0].startswith("> merhaba dünya"))
+
+    def test_multiline_quote_only_on_first_line(self):
+        from ui.page import Page
+
+        page = Page("T")
+        page._cols = 40
+        page.show_user_message("birinci satır\nikinci")
+        texts = [ln.split("\x00")[0] for ln, kind in page._seen
+                 if kind in (page.BALLOON, page.BALLOON_STAMP) and ln.split("\x00")[0]]
+        self.assertEqual(texts[0], "> birinci satır")
+        self.assertIn("ikinci", texts[-1])
+        self.assertFalse(texts[-1].startswith(">"))
+
+
 class TestAnswerMarkdownUnchanged(unittest.TestCase):
     def test_answer_has_no_reasoning_orange(self):
         fmt = MarkdownFormatter()

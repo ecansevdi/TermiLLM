@@ -49,9 +49,14 @@ def normalize_effort(value: str) -> str:
         "x-high": "xhigh",
         "x_high": "xhigh",
         "off": "none",
+        # auto / default: TermiLLM state'i. Provider'a "auto" diye gitmez.
+        "auto": "",
         "default": "",
+        "unset": "",
     }
     v = aliases.get(v, v)
+    if not v:
+        return ""
     return v if v in _LEVEL_RANK else "high"
 
 
