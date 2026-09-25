@@ -33,6 +33,10 @@ class AgentApplication:
         self.mentions = mentions
         self.page = page
 
+    # ------------------------------------------------------------------ #
+    # Yaşam döngüsü
+    # ------------------------------------------------------------------ #
+
     def run(self):
         storage = self.sessions.storage
         storage.ensure_directory()
@@ -48,7 +52,15 @@ class AgentApplication:
 
         # "Yeni sayfa" katmanını aç (siyah zemin, üst çubuk, alt kutu)
         if self.page is not None:
+            # Ctrl+P ile seçilen eforu state'e taşı; mevcut değeri göster
+            self.page.set_effort(self.state.reasoning_effort)
+            self.page.set_effort_callback(
+                lambda lvl: setattr(self.state, "reasoning_effort", lvl)
+            )
+            # Ctrl+O: provider menüsü
+            self.page.set_menu_callback(self._open_provider_menu)
             self.page.enter()
+
         clock.warmup()   # arka planda bölgesel saat keşfi
         if self.pipe_input:
             self.pipe_input.start()
@@ -80,6 +92,50 @@ class AgentApplication:
         self._repl()
         if self.page is not None:
             self.page.leave()
+
+    # ------------------------------------------------------------------ #
+    # Ctrl+O: provider menüsü
+    # ------------------------------------------------------------------ #
+
+    def _open_provider_menu(self):
+        from ui.provider_menu import show_provider_menu
+
+        show_provider_menu(
+            self.page,
+            current_name=self.config.provider_selection,
+            current_base=self.config.api_base_url,
+            current_model=self.config.agent_model,
+            apply_provider=self._apply_provider,
+        )
+
+    def _apply_provider(self, base_url: str, api_key: str, model: str):
+        """Menüden gelen provider/model değişimini uygular.
+
+        İstemci yeniden bağlanır (yeniden başlatma gerekmez), context
+        bilgisi yeni sunucudan sorgulanır, efor yoklaması yeniden koşar.
+        """
+        try:
+            self.chat_service.llm_client.rebind(base_url, api_key, model)
+        except Exception:
+            pass
+
+        n_ctx, source = resolve_context_size(
+            base_url, api_key, model,
+            fallback=self.config.context_fallback,
+            provider=self.config.context_provider,
+        )
+        if source == "fallback":
+            self.terminal.show_context_fallback_warning(n_ctx)
+        self.state.max_context_tokens = n_ctx
+        if self.page is not None:
+            self.page.set_metrics(
+                ctx_used=self.state.actual_context_tokens, ctx_total=n_ctx
+            )
+
+
+    # ------------------------------------------------------------------ #
+    # REPL
+    # ------------------------------------------------------------------ #
 
     def _repl(self):
         while True:
@@ -124,9 +180,14 @@ class AgentApplication:
 
             if self.page is not None and page_active(self.page):
                 self.page.show_user_message(user_input)
-                self.page.queue_line("")  # balon ile cevap arası boşluk
+                self.page.queue_line("")   # balon sonrası boşluk
+                self.page.queue_line("")   # mesaj ↔ cevap arası 1 boş satır
             self.chat_service.send_message(user_input)
             if self.page is not None and page_active(self.page):
+                # Cevabın bittiği satıra sağa yaslı saat hücresi ekle
+                stamp = self.chat_service.renderer.response_stamp()
+                if stamp:
+                    self.page.stamp_last_line(stamp, self.page.RIGHT_STAMP)
                 self.page.queue_line("")  # tur sonu boşluğu
 
 

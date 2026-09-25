@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sys
 
+from ui import clock  # noqa: F401  (saat artık satır sonuna eklenmiyor; bkz. show_stream_end)
+
 GREEN = '\033[92m'
 YELLOW = '\033[93m'
 CYAN = '\033[96m'
@@ -17,6 +19,7 @@ DIM = '\033[2m'
 RESET = '\033[0m'
 BOLD = '\033[1m'
 BOLD_RESET = '\033[22m'
+ITALIC = '\033[3m'
 
 # "Yeni sayfa" temel renkleri: beyaz üstüne siyah
 WHITE = '\033[97m'
@@ -25,6 +28,12 @@ BG_BLACK = '\033[40m'
 # Kutular için koyu gri (brightness ≈ %22); 256-renk destekli terminallerde
 # gerçek koyu gri, desteklemeyenlerde parlak-siyah zemine düşer.
 BG_GRAY = '\033[48;5;238m'
+
+# İçerik satırı türleri (ui/page.py ile paylaşılır)
+LINE_PLAIN = 1          # düz satır
+LINE_BALLOON = 2        # koyu gri kutu satırı (kullanıcı mesajı)
+LINE_BALLOON_STAMP = 3  # balonun sağ kenarındaki saat satırı
+LINE_RIGHT_STAMP = 4    # düz satırda sağa yaslı saat (model cevabı)
 
 _page = None  # Aktif Page; show_* fonksiyonları çıkışları buraya yönlendirir
 

@@ -25,4 +25,8 @@ class ApplicationState:
     actual_context_tokens: int = 0
     max_context_tokens: int = 4096
     debug_enabled: bool = False
+    # Ctrl+P ile seçilen canonical requested_effort (llm/reasoning.py kümesi).
+    # None: kullanıcı seçmedi; explicit effort gönderilmez, provider default'u kalır.
+    # Seçildiyse provider değişiminde KORUNUR, adapter normalize/omit eder.
+    reasoning_effort: Optional[str] = None
     attachments: AttachmentState = field(default_factory=AttachmentState)

@@ -32,27 +32,79 @@ Satır modeli:
 from __future__ import annotations
 
 import re
+import select
 import shutil
 import sys
+import threading
 import time
 
 from ui import clock
 from ui.completer import token_at_cursor
-from ui.keys import read_key, set_screen_model
+from ui.keys import read_key
 from ui.terminal import (
-    BG_BLACK, BG_GRAY, BOLD, BOLD_RESET, DIM, FG_WHITE, RESET,
+    BG_BLACK, BG_GRAY, BOLD, BOLD_RESET, DIM, FG_WHITE, LINE_BALLOON,
+    LINE_BALLOON_STAMP, LINE_PLAIN, LINE_RIGHT_STAMP, RESET,
 )
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*[A-Za-z]")
+_SGR_RE = re.compile(r"\033\[([0-9;]*)m")
 
 _DRAW_INTERVAL = 0.03  # canlı akışta yeniden çizim kısığı (sn)
 _MAX_HISTORY = 5000    # geçmiş tamponu sınırı (satır)
-_SCROLL_STEP = 3       # mouse wheel adımı (satır)
+_SCROLL_STEP = 3       # tekerlek/ok tuşu adımı (satır)
+
+# Canonical reasoning effort seviyeleri (llm/reasoning.py ile aynı küme)
+_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+EFFORT_LEVELS = _EFFORT_LEVELS     # dış kullanım
 
 
 def visible_width(s: str) -> int:
     """ANSI kaçış dizilerini saymadan satır genişliği."""
     return len(_ANSI_RE.sub("", s))
+
+
+def _sgr_state(text: str) -> list[str]:
+    """Metnin sonuna kadar aktif olan SGR parametrelerini döndürür."""
+    params: list[str] = []
+    for m in _SGR_RE.finditer(text):
+        p = m.group(1)
+        if p in ("", "0"):
+            params = []
+        else:
+            params.extend(c for c in p.split(";") if c)
+    return params
+
+
+def wrap_ansi(line: str, width: int) -> list[str]:
+    """Uzun satırı ekran genişliğine göre alt satırlara böler.
+
+    ANSI dizileri bozulmaz; bölünen satırın devamı, o noktadaki renk/zemin
+    durumunu yeniden yayınlayarak başlar (kod bloğu gri zemini korunur).
+    """
+    if width <= 0 or visible_width(line) <= width:
+        return [line]
+    rows = []
+    cur = ""
+    w = 0
+    i = 0
+    n = len(line)
+    while i < n:
+        m = _ANSI_RE.match(line, i)
+        if m:
+            cur += m.group(0)
+            i = m.end()
+            continue
+        if w >= width:
+            state = _sgr_state(cur)
+            rows.append(cur)
+            cur = f"\033[{';'.join(state)}m" if state else ""
+            w = 0
+        cur += line[i]
+        w += 1
+        i += 1
+    if cur:
+        rows.append(cur)
+    return rows
 
 
 class _PageWriter:
@@ -97,9 +149,11 @@ class _PageWriter:
 class Page:
     """Ana REPL'in üstünde açılan siyah 'yeni sayfa' katmanı."""
 
-    # satır türleri
-    PLAIN = 1
-    BALLOON = 2
+    # satır türleri (ui/terminal.py sabitleri)
+    PLAIN = LINE_PLAIN
+    BALLOON = LINE_BALLOON
+    BALLOON_STAMP = LINE_BALLOON_STAMP
+    RIGHT_STAMP = LINE_RIGHT_STAMP
 
     def __init__(self, title: str = "TermiLLM"):
         self.title = title
@@ -111,7 +165,7 @@ class Page:
         self._rows = 24
         self._cols = 80
 
-        self._input_height = 7          # çerçeve + üst/alt boşluk dahil
+        self._input_height = 5          # çerçeve + üst/alt boşluk dahil
         self._max_input_height = 16
         self._min_input_height = 5
 
@@ -120,11 +174,18 @@ class Page:
         self._cursor_col = 0
         self._view_top = 0
 
+        # Reasoning efor göstergesi. None = kullanıcı seçmedi (provider default).
+        self._effort = None
+        self._effort_cb = None          # seçim yapıldığında çağrılır
+        self._hint_row = None           # efor ipucu satırı (ekran satırı)
+        self._effort_note = ""          # 'istenen → gönderilen' açıklaması
+        self._menu_cb = None            # Ctrl+O: provider menüsü (application köprüsü)
+
         # İçerik penceresinde TÜM oturum geçmişi: (metin, kind)
         self._seen: list[tuple[str, int]] = []
         self._print_buf = ""          # tamamlanmamış (canlı) satır
         self._last_draw = 0.0
-        self._scroll_offset = 0       # mouse wheel ile geçmişe bakış
+        self._scroll_offset = 0       # tekerlek/ok tuşu ile geçmişe bakış
 
         self._keep_top: list[str] = []
         self._keep_bottom: list[str] = []
@@ -171,13 +232,16 @@ class Page:
 
         self.active = True
         sys.stdout = _PageWriter(self)
-        set_screen_model(self._screen_text)
         self._read_size()
 
         out = self._real_stdout
         out.write("\0337")                 # DECSC: imleci kaydet
         out.write("\033[?1049h")           # alternate screen buffer
-        out.write("\033[?1000h\033[?1006h")  # mouse wheel raporlama (SGR)
+        # Mouse tracking AÇILMAZ: ?1000/?1002/?1003 terminallerin NATİVE
+        # seçimini ezmiştir (fare olayları uygulamaya yönlenir). Onun yerine
+        # ?1007 (alternate scroll): tekerlek alt-ekranda ok tuşlarına
+        # çevrilir → scroll çalışır, seçim terminalin kendisinde kalır.
+        out.write("\033[?1007h")
         out.write(f"{BG_BLACK}{FG_WHITE}")
         out.write("\033[2J")               # ekranı sil
         out.write("\033[H")                # home
@@ -198,7 +262,7 @@ class Page:
         sys.stdout = real
 
         real.write(f"{RESET}")
-        real.write("\033[?1006l\033[?1000l")  # mouse raporlamayı kapat
+        real.write("\033[?1007l")           # alternate scroll kapat
         real.write("\033[?1049l")          # ana ekrana dön
         real.write("\0338")                # DECRC: imleci geri yükle
         real.flush()
@@ -210,7 +274,6 @@ class Page:
                 pass
         self._old_term = None
         self._real_stdout = None
-        set_screen_model(None)
 
     # ------------------------------------------------------------------ #
     # Düzen / yeniden çizim
@@ -224,11 +287,18 @@ class Page:
         return max(0, self._rows - self._keep_rows_top - self._keep_rows_bottom)
 
     def _paint_all(self):
-        """Tüm sabitleri (üst çubuk + giriş kutusu) çizer."""
+        """Tüm sabitleri (üst çubuk + giriş kutusu) çizer.
+
+        Üst çubuğun altındaki TÜM satırlar önce temizlenir: kutu yüksekliği
+        değişince eski kutunun üstte kalan satırları hayalet kalıntı olarak
+        kalmasın. Ardından içerik penceresi ve kutu içeriği yeniden çizilir.
+        """
         self._build_top_bar()
         self._build_input_box()
         out = self._real_stdout
         out.write("\0337")
+        for row in range(self._keep_rows_top + 1, self._rows + 1):
+            out.write(f"\033[{row};1H\033[2K")
         for i, ln in enumerate(self._keep_top):
             out.write(f"\033[{i + 1};1H{ln}")
         start = self._rows - len(self._keep_bottom) + 1
@@ -236,6 +306,8 @@ class Page:
             out.write(f"\033[{start + i};1H{ln}")
         out.write("\0338")
         out.flush()
+        self._draw_window(force=True)
+        self.draw_input()
 
     def resize(self):
         if self.active:
@@ -275,6 +347,25 @@ class Page:
         self._keep_bottom = [
             f"{BG_GRAY}{FG_WHITE}{ln}{RESET}{BG_BLACK}" for ln in lines
         ]
+        # Efor ipucu satırı: kutunun HEMEN üstünde (ekran satırı=h)
+        # üst çubukla kutu arasına yerleşir; _paint_all burayı da siler/çizer.
+        top_row = self._rows - h + 1 - 1              # kutu üst çizgisinin üstü
+        level = self._effort
+        if not level:
+            hint_text = f" Ctrl+P efor: {FG_WHITE}{BOLD}provider default{BOLD_RESET}"
+        else:
+            items = []
+            for it in _EFFORT_LEVELS:
+                if it == level:
+                    items.append(f"{FG_WHITE}{BOLD}[{it}]{BOLD_RESET}")
+                else:
+                    items.append(f"{DIM}{it}{RESET}{BG_BLACK}")
+            hint_text = f" Ctrl+P efor: " + " · ".join(items)
+        if self._effort_note:
+            hint_text += f"{DIM}  — {self._effort_note}{RESET}{BG_BLACK}"
+        pad = max(0, cols - visible_width(hint_text) - 1)
+        self._hint_row = top_row
+        self._keep_bottom.append(f"{' ' * pad}{hint_text}")
         self._keep_rows_bottom = len(self._keep_bottom)
 
     def _set_input_height(self, h: int):
@@ -318,14 +409,19 @@ class Page:
     # ------------------------------------------------------------------ #
 
     def feed_print(self, s: str):
-        """sys.stdout.write akışını satırlara böler; tamamlananlar statik."""
+        """sys.stdout.write akışını satırlara böler; tamamlananlar statik.
+
+        Ekrana sığmayan satırlar alt satırlara sarılır (ANSI durumu taşınarak).
+        """
         if not self.active or not s:
             return
         self._print_buf += s
         committed = False
         while "\n" in self._print_buf:
             line, self._print_buf = self._print_buf.split("\n", 1)
-            self._seen.append((line.rstrip("\r"), self.PLAIN))
+            line = line.rstrip("\r")
+            for piece in wrap_ansi(line, self._cols):
+                self._seen.append((piece, self.PLAIN))
             committed = True
         self._trim_seen()
         if self._scroll_offset > 0:
@@ -352,6 +448,41 @@ class Page:
     # İçerik penceresi çizimi
     # ------------------------------------------------------------------ #
 
+    def _row_text(self, ln: str, kind: int) -> str:
+        """Satırın görünür metnini (dolgu dahil, tam genişlik) üretir.
+
+        Balonlar tam genişlik tek parça gri kutudur; damga satırında saat
+        AYNI gri zeminin sağ kenarında durur (ardında siyah kalmaz):
+        "|  metin ...... saat  |"
+        """
+        cols = self._cols
+        if kind in (self.BALLOON, self.BALLOON_STAMP):
+            if kind == self.BALLOON_STAMP:
+                body_txt, _, stamp = ln.partition("\x00")
+                bw = max(1, cols - 8)          # 1 boşluk + gövde + boşluk + 5 saat + 1
+                body = self._clip(body_txt, bw)
+                pad = " " * max(0, bw - visible_width(body))
+                return f" {body}{pad} {stamp} "
+            bw = max(1, cols - 3)
+            body = self._clip(ln, bw)
+            pad = " " * max(0, bw - visible_width(body))
+            return f" {body}{pad}  "
+        if kind == self.RIGHT_STAMP:
+            body_txt, _, stamp = ln.partition("\x00")
+            bw = max(1, cols - 6)
+            body = self._clip(body_txt, bw)
+            pad = " " * max(0, bw - visible_width(body))
+            return f"{body}{pad}{stamp} "
+        text = self._clip(ln, cols)
+        return text + " " * max(0, cols - visible_width(text))
+
+    def _render_row(self, ln: str, kind: int) -> str:
+        """Satırı hücre düzenine çevirir."""
+        text = self._row_text(ln, kind)
+        if kind in (self.BALLOON, self.BALLOON_STAMP):
+            return f"{BG_GRAY}{FG_WHITE}{text}{RESET}{BG_BLACK}"
+        return f"{BG_BLACK}{FG_WHITE}{text}{RESET}{BG_BLACK}"
+
     def _draw_window(self, throttle: bool = False, force: bool = False):
         """Görünen satırları ÜSTTEN hizalı şekilde absolu konumla çizer.
 
@@ -368,6 +499,7 @@ class Page:
 
         top = self._keep_rows_top + 1
         bottom = self._rows - self._keep_rows_bottom
+        cols = self._cols
         win = max(0, bottom - top + 1)
         if win <= 0:
             return
@@ -385,17 +517,8 @@ class Page:
             out.write(f"\033[{row};1H\033[2K")
         for i, (ln, kind) in enumerate(view):
             row = top + i
-            if kind == self.BALLOON:
-                body = self._clip(ln, max(1, self._cols - 4))
-                out.write(
-                    f"\033[{row};1H{BG_GRAY}{FG_WHITE}  {body}  "
-                    f"\033[K{RESET}{BG_BLACK}"
-                )
-            else:
-                body = self._clip(ln, self._cols)
-                out.write(
-                    f"\033[{row};1H{BG_BLACK}{body}{RESET}{BG_BLACK}\033[K"
-                )
+            rendered = self._render_row(ln, kind)
+            out.write(f"\033[{row};1H{rendered}\033[K")
         if live:
             row = top + len(view)
             out.write(
@@ -438,61 +561,22 @@ class Page:
             return  # geçmişe bakışta görünüm dondurulur
         self._draw_window()
 
+    def stamp_last_line(self, stamp: str, kind: int):
+        """Son basılan düz satıra sağa yaslı saat hücresi ekler."""
+        if not self._seen:
+            return
+        line, cur_kind = self._seen[-1]
+        if cur_kind != self.PLAIN or "\x00" in line:
+            return
+        self._seen[-1] = (f"{line}\x00{stamp}", kind)
+        self._draw_window(force=True)
+
     def clear_content(self):
         """İçerik penceresini temizle (/clear)."""
         self._seen.clear()
         self._print_buf = ""
         self._scroll_offset = 0
         self._draw_window(force=True)
-
-    # ------------------------------------------------------------------ #
-    # Ekran modeli: fare seçimi için koordinat → metin
-    # ------------------------------------------------------------------ #
-
-    def _screen_text(self, start: tuple, end: tuple) -> str:
-        """Seçim dikdörtgenindeki satırları içerik modelinden döndürür.
-
-        start/end 1-tabanlı terminal koordinatlarıdır. Pencere satırları
-        _seen (geçmiş) + canlı satırla birebir eşlenir; balon satırlarının
-        iki yatay boşluk girintisi metne dahil edilmez.
-        """
-        if not start or not end:
-            return ""
-        top = self._keep_rows_top + 1
-        y1, y2 = sorted((start[1], end[1]))
-        x1, x2 = sorted((start[0], end[0]))
-        if y2 < top:
-            return ""
-
-        win = self._window_height()
-        if win <= 0:
-            return ""
-        end_idx = len(self._seen) - self._scroll_offset
-        start_idx = max(0, end_idx - win)
-        view = self._seen[start_idx:end_idx]
-
-        out_lines = []
-        for i, (ln, kind) in enumerate(view):
-            row = top + i
-            if row < y1:
-                continue
-            if row > y2:
-                break
-            if kind == self.BALLOON and ln:
-                # balon: "  metin" ile çizilir → 2 sütun girinti kaldır
-                text = ln
-            else:
-                text = ln
-            # Sütun aralığı: yalnızca düz metin kısmını al (ANSI'sız)
-            plain = _ANSI_RE.sub("", text)
-            if row == y1 and row == y2:
-                plain = plain[max(0, x1 - 1):max(0, x2 - 1)]
-            elif row == y1:
-                plain = plain[max(0, x1 - 1):]
-            elif row == y2:
-                plain = plain[:max(0, x2 - 1)]
-            out_lines.append(plain.rstrip())
-        return "\n".join(l for l in out_lines if l.strip())
 
     # ------------------------------------------------------------------ #
     # Overlay: komut/yardım çıktısı; tuşta kaybolur
@@ -523,10 +607,9 @@ class Page:
                     f"── {idx + 1}/{len(pages)} ── tuş: devam · çıkış"
                     if len(pages) > 1 else ""
                 ))
-                ready, _, _ = select.select([fd], [], [], 0.05)
-                if not ready:
-                    break
-                key = read_key(fd, mouse=True)
+                # Tuş bekle: zaman doldu diye KAPANMAZ (açılışta otomatik
+                # kapanma hatasıydı); yalnızca tuş olayı döngüyü ilerletir.
+                key = read_key(fd)
                 if key in ("down", " ", "enter", "tab", "j") and idx < len(pages) - 1:
                     idx += 1
                     continue
@@ -538,6 +621,24 @@ class Page:
                 except termios.error:
                     pass
         self._draw_window(force=True)
+
+    def clear_content_window(self):
+        """İçerik penceresini (üst çubuk ile giriş kutusu arasını) temizler.
+
+        Menü/overlay ekranları tek-ekran ilkesiyle çalışır: yeni ekran
+        çizilmeden önce eski içerik kaybolur; çıkışta _draw_window içeriği
+        geri boyar.
+        """
+        if not self.active:
+            return
+        out = self._real_stdout
+        top = self._keep_rows_top + 1
+        bottom = self._rows - self._keep_rows_bottom
+        out.write("\0337")
+        for r in range(top, bottom + 1):
+            out.write(f"\033[{r};1H\033[2K")
+        out.write("\0338")
+        out.flush()
 
     def _overlay_lines(self, lines: list[str], page_hint: str = ""):
         if not lines:
@@ -562,21 +663,41 @@ class Page:
     # Kullanıcı balonu
     # ------------------------------------------------------------------ #
 
-    def show_user_message(self, text: str):
-        """Kullanıcı mesajını çizgisiz, boşluklu gri kutu + saat damgası.
+    @staticmethod
+    def _wrap(text: str, width: int) -> list[str]:
+        """Metni kelime sınırlarında verilen genişliğe sarar."""
+        out = []
+        for raw in (text or "").split("\n"):
+            words = raw.split()
+            if not words:
+                out.append("")
+                continue
+            cur = words[0]
+            for w in words[1:]:
+                if visible_width(cur) + 1 + visible_width(w) <= width:
+                    cur += " " + w
+                else:
+                    out.append(cur)
+                    cur = w
+            out.append(cur)
+        return out or [""]
 
-        Yapı: boş satır · gri boşluk satırı · metin (2 sütun yatay boşluk)
-        · gri boşluk satırı · boş satır · saat damgası.
+    def show_user_message(self, text: str):
+        """Kullanıcı mesajını tam genişlik gri kutuda, sağda saatle basar.
+
+        Kutu üstten/alttan birer GİRİ boşluk satırıyla geniştir (boş satırlar
+        da kutunun parçası); uzun satırlar kelime sınırlarında sarılır; son
+        satır BALLOON_STAMP türündedir: sağ kenarda saat hücresi taşır.
         """
-        lines = (text or "").split("\n") or [""]
-        self.queue_line("", self.PLAIN)
-        self.queue_line("", self.BALLOON)             # üst iç boşluk
-        for ln in lines:
-            self.queue_line(ln, self.BALLOON)
-        self.queue_line("", self.BALLOON)             # alt iç boşluk
-        self.queue_line("", self.PLAIN)
-        self.queue_line(f"{DIM}saat {clock.now_str()}{RESET}{BG_BLACK}",
-                        self.PLAIN)
+        now = clock.now_str()   # mesajın GİRİLDİĞİ andeki saat
+        body = self._wrap(text, max(8, self._cols - 11))
+        self.queue_line("", self.BALLOON)             # üst iç boşluk (gri)
+        for i, ln in enumerate(body):
+            if i == len(body) - 1:
+                self.queue_line(f"{ln}\x00{now}", self.BALLOON_STAMP)
+            else:
+                self.queue_line(ln, self.BALLOON)
+        self.queue_line("", self.BALLOON)             # alt iç boşluk (gri)
 
     # ------------------------------------------------------------------ #
     # Giriş kutusu editörü
@@ -623,8 +744,104 @@ class Page:
         out.write(f"\033[{crow};{ccol}H")
         out.flush()
 
-    @staticmethod
-    def _clip(line: str, width: int) -> str:
+    def set_effort(self, level: str):
+        """Efor göstergesini günceller. None/boş = provider default."""
+        if level in (None, "", "auto"):
+            if self._effort is None:
+                return
+            self._effort = None
+            if self.active:
+                self._paint_all()
+            return
+        if level not in _EFFORT_LEVELS or level == self._effort:
+            return
+        self._effort = level
+        if self.active:
+            self._paint_all()
+
+    def set_effort_note(self, note: str):
+        """'istenen → gönderilen' açıklamasını günceller (tur sonrası)."""
+        note = (note or "").strip()
+        if note == self._effort_note:
+            return
+        self._effort_note = note
+        if self.active:
+            self._paint_all()
+
+    def set_effort_callback(self, fn):
+        """Ctrl+P ile efor seçildiğinde çağrılır (page → state köprüsü)."""
+        self._effort_cb = fn
+
+    def set_menu_callback(self, fn):
+        """Ctrl+O ile çağrılacak provider menüsü köprüsü."""
+        self._menu_cb = fn
+
+    def get_effort(self) -> str:
+        return self._effort
+
+    def _pick_effort(self):
+        """Ctrl+P seçim overlay'i: ok tuşlarıyla gez, Enter onayla, Esc iptal."""
+        import termios
+        import tty
+        fd = self._fd or 0
+        old = None
+        try:
+            old = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+        except termios.error:
+            old = None
+        # Seçim yokken imleç high'da durur; Enter'a basılmadan state değişmez.
+        if self._effort in _EFFORT_LEVELS:
+            idx = _EFFORT_LEVELS.index(self._effort)
+        else:
+            idx = _EFFORT_LEVELS.index("high")
+        top = self._keep_rows_top + 1
+        try:
+            # Tek-ekran ilkesi: efor listesi açılmadan önceki içerik temizlenir
+            self.clear_content_window()
+            while True:
+                rows = ["Efor seviyesi seç (canonical):"]
+                for i, it in enumerate(_EFFORT_LEVELS):
+                    mark = "●" if i == idx else "○"
+                    if i == idx:
+                        rows.append(f"  {mark} {FG_WHITE}{BOLD}{it}{BOLD_RESET}")
+                    else:
+                        rows.append(f"  {mark} {DIM}{it}{RESET}{BG_BLACK}")
+                rows.append("")
+                rows.append(f"{DIM}↑↓ gez · enter onayla · esc vazgeç{RESET}{BG_BLACK}")
+                self._overlay_lines(rows, page_hint="")
+                ready, _, _ = select.select([fd], [], [], 0.05)
+                if not ready:
+                    continue
+                key = read_key(fd)
+                if key == "up":
+                    idx = (idx - 1) % len(_EFFORT_LEVELS)
+                elif key == "down":
+                    idx = (idx + 1) % len(_EFFORT_LEVELS)
+                elif key == "enter":
+                    break
+                elif key in ("esc", "ctrl-c"):
+                    self._draw_window(force=True)
+                    self.draw_input()
+                    return
+            level = _EFFORT_LEVELS[idx]
+        finally:
+            if old is not None:
+                try:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old)
+                except termios.error:
+                    pass
+        if level != self._effort:
+            self.set_effort(level)
+        if self._effort_cb:
+            try:
+                self._effort_cb(level)
+            except Exception:
+                pass
+        self._draw_window(force=True)
+        self.draw_input()
+
+    def _clip(self, line: str, width: int) -> str:
         if visible_width(line) <= width:
             return line
         out = ""
@@ -648,7 +865,6 @@ class Page:
 
         Enter gönderir; Shift+Enter (veya Ctrl+J) yeni satır.
         Ctrl+C KeyboardInterrupt (SIGINT), boşken Ctrl+D EOFError fırlatır.
-        Fare seçimi OSC 52 ile panoya kopyalanır.
         """
         import select
 
@@ -677,11 +893,7 @@ class Page:
                 ready, _, _ = select.select([fd], [], [], 0.2)
                 if not ready:
                     continue
-                key = read_key(fd, mouse=True)
-                if key.startswith("selection:"):
-                    from ui.clipboard import copy_selection
-                    copy_selection(key.split(":", 1)[1])
-                    continue
+                key = read_key(fd)
                 if key in ("shift-enter", "ctrl-j"):
                     self._new_line()
                     self.draw_input()
@@ -692,6 +904,13 @@ class Page:
                 elif key == "ctrl-d":
                     if self._edit_lines == [""]:
                         raise EOFError
+                elif key in ("up", "down") and len(self._edit_lines) == 1 and not self._edit_lines[0]:
+                    # Boş girdi: ok tuşları (ve ?1007 alternate scroll'un
+                    # tekerleği) sohbeti kaydırır; yazarken metin gezinir.
+                    if key == "up":
+                        self.scroll_up()
+                    else:
+                        self.scroll_down()
                 elif key == "left":
                     if self._cursor_col > 0:
                         self._cursor_col -= 1
@@ -751,12 +970,15 @@ class Page:
                 elif key == "ctrl-w":
                     self._kill_word()
                     self.draw_input()
-                elif key == "wheel-up":
-                    self.scroll_up()
-                elif key == "wheel-down":
-                    self.scroll_down()
                 elif key == "tab":
                     self._open_picker()
+                elif key == "ctrl-p":
+                    self._pick_effort()
+                    continue
+                elif key == "ctrl-o":
+                    if self._menu_cb:
+                        self._menu_cb()
+                    continue
                 elif key == "esc":
                     pass
                 elif len(key) == 1 and key.isprintable():
@@ -765,6 +987,7 @@ class Page:
                     self.draw_input()
         finally:
             self._reset_edit()
+            self.draw_input()   # Enter sonrası kutu anında boş görünsün
 
     def _reset_edit(self):
         self._edit_lines = [""]

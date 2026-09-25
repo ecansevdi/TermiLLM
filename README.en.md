@@ -18,7 +18,7 @@ Other highlights:
 
 ### Requirements
 
-- **Python 3.10+** (only `openai` and `python-dotenv` as pip dependencies; the search layer uses only the standard library)
+- **Python 3.10+** (single pip dependency: `openai`; configuration uses stdlib `tomllib` — `python-dotenv` was removed)
 - **Linux** (microphone recording uses `arecord`/ALSA and named pipes; other features are platform-independent)
 - A running **llama.cpp server** (or an OpenAI-compatible endpoint)
 
@@ -37,28 +37,27 @@ cd TermiLLM
 bash setup.sh          # creates a virtualenv named "libr" and installs dependencies
 ```
 
-Then create a `.env` file in the project root:
+Provider settings live in a **TOML config file**:
+`~/.config/termillm/config.toml` (nothing is stored in the project directory,
+secrets never touch the repo).
 
-```dotenv
-SERVER_BASE=http://127.0.0.1:8080
-base_url=http://127.0.0.1:8080/v1
-api_key=sk-...
+A legacy `.env` file is **auto-imported and deleted on first launch** (root
+keys + `p<n>_` provider records, including `${VAR}` expansion).
+
+```toml
+active = "local"
+
+[providers.local]
+base_url = "http://127.0.0.1:8080/v1"   # OpenAI-compatible endpoint
+api_key  = "enc1:…"                      # encrypted; placeholder is fine for llama.cpp
+model    = "Bonsai-2"
 ```
 
-- `SERVER_BASE` — used for local context-size discovery (llama.cpp `/props`).
-- `base_url` — full address of the OpenAI-compatible chat endpoint (e.g. `SERVER_BASE/v1`, `https://api.x.ai/v1`, OpenRouter, OrcaRouter).
-- `api_key` — ignored by llama.cpp server; a real key for remote services.
+- `base_url` — full address of the OpenAI-compatible chat endpoint (e.g. `http://127.0.0.1:8080/v1`, `https://api.x.ai/v1`, OpenRouter).
+- `api_key` — ignored by llama.cpp server (`sk-local` placeholder is enough); a real key for remote services, stored **encrypted** (`enc1:` prefix, machine-bound secret: `~/.termillm_salt`).
+- The active record is chosen with `active =`; adding providers and picking models is best done via the in-app **Ctrl+O** menu (fetches `GET /models`).
 
-Optional environment variables:
-
-```dotenv
-WHISPER_BIN=whisper-cli                          # path to the whisper.cpp binary
-WHISPER_MODEL=~/whisper.cpp/models/ggml-base.bin # GGML model file
-WHISPER_LANG=tr                                  # transcription language
-LLAMA_PIPE=/tmp/llama_input.pipe                 # named pipe path
-CONTEXT_PROVIDER=llamacpp                        # force: llamacpp | openrouter | orcarouter | xai | openai | anthropic | claude
-CONTEXT_FALLBACK=4096                            # used if discovery fails
-```
+Optional environment variables (shell environment):
 
 Run:
 
@@ -181,8 +180,9 @@ cat /tmp/output.txt > /tmp/llama_input.pipe
 
 ### Model communication
 
-- Requests go to the `chat.completions` streaming endpoint with `reasoning_effort: xhigh` and `enable_thinking` chat template kwargs (enables thinking mode on llama.cpp server).
-- The thinking stream is captured two ways: OpenAI-style `reasoning_content` deltas and a `<think>…</think>` tag fallback. Thinking text is shown dimmed yellow under a `💭 Düşünüyor...` ("Thinking...") header.
+- Requests go to the `chat.completions` streaming endpoint. An effort field is sent only after Ctrl+P selects a level and the model documents it. Until then the UI shows `provider default` and the request omits `reasoning_effort` / `reasoning` / `output_config`. Claude on `api.anthropic.com` uses the native Messages API (`output_config.effort`).
+- Thinking and the final answer are separate channels. Structured fields (`reasoning`, `reasoning_content`, `reasoning_details`, Ollama `thinking`, Claude `thinking_delta`, Gemini thought summaries, Mistral think chunks) win. Inline `<think>` / `<thought>` tags are only a fallback when the reply starts with them. `<web_search>` inside thinking does not start a search. The visible history stores the final answer; signatures and provider continuation fields stay in `provider_state`.
+- Thinking text is dim yellow (orange) under `💭 Düşünüyor...` (or `💭 Düşünme özeti...` for a summary). Bold, italic, and inline code sit on that base color and return to it when the span ends, including across newlines and stream chunks.
 - The Markdown formatter converts code blocks, inline code, bold text, headings, and blockquotes to ANSI colors — all processed on the fly (character by character) during streaming.
 - The model name field is fixed (`"agent_model"`); llama.cpp server ignores it and serves whatever model it has loaded.
 
@@ -192,7 +192,7 @@ cat /tmp/output.txt > /tmp/llama_input.pipe
 TermiLLM/
 ├── main.py                  # composition root — wires objects, starts the app
 ├── application.py           # AgentApplication: startup flow + REPL loop
-├── config.py                # .env + constants (Config dataclass)
+├── config.py                # TOML config (~/.config/termillm/) + key encryption
 ├── state.py                 # runtime state (Application/Session/AttachmentState)
 ├── commands/
 │   ├── router.py            # routes input to command classes
@@ -205,8 +205,12 @@ TermiLLM/
 │   ├── attachments.py       # pending text/image attachments
 │   └── mentions.py          # @file and ?"query" parsing
 ├── llm/
-│   ├── client.py            # OpenAI-compatible stream call
-│   ├── stream.py            # <think>/<web_search> parser, StreamResult
+│   ├── client.py            # stream call, effort and reasoning normalization
+│   ├── reasoning.py         # Ctrl+P effort → provider field
+│   ├── normalize.py         # structured delta → reasoning/content
+│   ├── reasoning_text.py    # inline <think>/<thought> fallbacks
+│   ├── anthropic_transport.py  # Claude native Messages SSE
+│   ├── stream.py            # <web_search> on the content channel, StreamResult
 │   ├── server_info.py       # context discovery (llamacpp, openrouter, xai, …)
 │   ├── cancel.py            # abort turn with Ctrl+X / SIGINT
 │   └── abort.py             # socket shutdown + llama-server /abort
@@ -224,7 +228,7 @@ TermiLLM/
 │   └── providers.py         # SearXNG and Tavily providers
 ├── ui/
 │   ├── terminal.py          # prompt, context bar, help, stats, colors
-│   ├── markdown.py          # Markdown → ANSI converter (streaming)
+│   ├── markdown.py          # Markdown → ANSI; orange base style for reasoning
 │   ├── stream_renderer.py   # draws thinking/response stream to the terminal
 │   ├── line_edit.py         # line editor (box on @)
 │   ├── picker.py            # file box (directory browsing)

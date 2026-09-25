@@ -1,4 +1,12 @@
-"""Ham terminal tuş okuma (UTF-8, ok tuşları, Esc, Shift+Enter, mouse)."""
+"""Ham terminal tuş okuma (UTF-8, ok tuşları, Esc, Shift+Enter).
+
+Fare olayları BİLİNÇLİ OLARAK yakalanmaz: uygulama mouse tracking modunu
+(?1000/?1002/?1003/?1006) hiç açmaz, böylece metin seçimi terminalin
+KENDİ native seçimidir (sol tuş + sürükleme, sağ tık menüsü, Shift+sol tuş
+huzurları... hepsi terminale kalır). ?1007 (alternate scroll) sayesinde
+alternate screen'deyken fare tekerleği yukarı/aşağı ok tuşlarına çevrilir;
+Page bu tuşları sohbet kaydırmasına bağlar.
+"""
 
 from __future__ import annotations
 
@@ -6,16 +14,13 @@ import os
 import select
 
 
-# Fare seçim durumu (read_key çağrıları arasında korunur)
-_sel_active = False
-_sel_start = None   # (x, y)
-_sel_end = None
-
-
-def read_key(fd: int = 0, mouse: bool = False) -> str:
+def read_key(fd: int = 0) -> str:
     """Tek tuş. Özel adlar: enter, shift-enter, ctrl-j, tab, esc, up, down,
-    left, right, backspace, delete, home, end, wheel-up, wheel-down,
+    left, right, backspace, delete, home, end,
     ctrl-c, ctrl-d, ctrl-u, ctrl-k, ctrl-a, ctrl-e, ctrl-w.
+
+    Not: tekerlek (?1007 alternate scroll) terminale ok tuşu olarak gelir
+    ve yukarıdaki 'up'/'down' adlarıyla döner.
     """
     b = os.read(fd, 1)
     if not b:
@@ -38,6 +43,10 @@ def read_key(fd: int = 0, mouse: bool = False) -> str:
         return "ctrl-u"
     if c == 0x17:
         return "ctrl-w"
+    if c == 0x10:
+        return "ctrl-p"
+    if c == 0x0F:
+        return "ctrl-o"
     if c == 0x0D:
         # CR dizisiyle mi geldi kontrol et (kitty/konsole: CSI 27;2;13~ vb.)
         ready, _, _ = select.select([fd], [], [], 0.005)
@@ -86,8 +95,6 @@ def _csi_sequence(fd: int) -> str:
     if not ready:
         return "esc"
     code = os.read(fd, 1)
-    if code == b"<":
-        return _sgr_mouse(fd)
     if code == b"A":
         return "up"
     if code == b"B":
@@ -119,7 +126,7 @@ def _csi_sequence(fd: int) -> str:
         extra = os.read(fd, 1) if select.select([fd], [], [], 0.02)[0] else b""
         return "delete" if extra == b"~" else "esc"
     if code in (b"5", b"6"):
-        # CSI 5~ / 6~ : PageUp / PageDown
+        # CSI 5~ / 6~ : PageUp / PageDown (sohbet kaydırmasına bağlanır)
         extra = os.read(fd, 1) if select.select([fd], [], [], 0.02)[0] else b""
         if extra == b"~":
             return "up" if code == b"5" else "down"
@@ -154,86 +161,17 @@ def _csi_sequence(fd: int) -> str:
     return "esc"
 
 
-def _sgr_mouse(fd: int) -> str:
-    """SGR mouse olayı: CSI < b;x;y(M|m).
-
-    Wheel: b=64 yukarı, 65 aşağı. Seçim modunda (mouse=True) sol tuş
-    baskısı (b=0) sürükleme (b=32) ve bırakma (b=0 + m) seçim aralığını
-    belirler; bırakışta 'selection:<metin>' döner.
-    """
-    global _sel_active, _sel_start, _sel_end
-
-    tail = _read_csi_tail(fd)          # örn. b"64;10;5M"
-    if not tail or not tail.endswith((b"M", b"m")):
-        return "esc"
-    release = tail.endswith(b"m")
-    parts = tail[:-1].split(b";")
-    if len(parts) != 3:
-        return "esc"
-    try:
-        code = int(parts[0])
-        x = int(parts[1])
-        y = int(parts[2])
-    except ValueError:
-        return "esc"
-
-    if code == 64:
-        return "wheel-up"
-    if code == 65:
-        return "wheel-down"
-
-    if not mouse:
-        return "esc"
-
-    base = code & 0x03
-    if base == 0:                      # sol tuş
-        if release:
-            if _sel_active and _sel_start:
-                _sel_active = False
-                text = _extract_selection(_sel_start, _sel_end or _sel_start)
-                _sel_start = _sel_end = None
-                if text:
-                    return f"selection:{text}"
-                return "esc"
-            _sel_active = True
-            _sel_start = (x, y)
-            _sel_end = (x, y)
-            return "esc"
-        if _sel_active:
-            _sel_end = (x, y)
-        return "esc"
-    return "esc"
-
-
-def _extract_selection(start: tuple, end: tuple) -> str:
-    """Seçim koordinatlarını metne çevirir.
-
-    Terminaller ekran içeriğini geri vermez; metni sayfanın içerik modeli
-    (_page_model) sağlar. Model yoksa boş döner ve kopyalama sessizce geçer.
-    """
-    getter = _page_model
-    if getter is None:
-        return ""
-    try:
-        return getter(start, end)
-    except Exception:
-        return ""
-
-
-# Page.set_screen_model() ile atanır: (start, end) -> metin
-_page_model = None
-
-
-def set_screen_model(getter) -> None:
-    global _page_model
-    _page_model = getter
-
-
 def _read_csi_tail(fd: int) -> bytes:
-    """CSI dizisinin sonunu (~ veya harf) okuyana dek toplar."""
+    """CSI dizisinin sonunu (~ veya harf) okuyana dek toplar.
+
+    İlk byte için 50ms beklenir; ESC[ ile tuş arasında parça parça
+    gelen dizilerde erken vazgeçilip olayın KAYBOLMAMASI için.
+    """
     buf = bytearray()
+    first = True
     while True:
-        ready, _, _ = select.select([fd], [], [], 0.02)
+        ready, _, _ = select.select([fd], [], [], 0.05 if first else 0.02)
+        first = False
         if not ready:
             break
         ch = os.read(fd, 1)

@@ -14,6 +14,23 @@ from ui.terminal import DIM, GREEN, RED, RESET, YELLOW, TerminalUI
 MAX_SEARCH_ROUNDS = 6
 
 
+def assistant_history_message(result) -> dict:
+    """Görünen cevap history'ye yazılır. Continuation ayrı alanda kalır.
+
+    <think>/<thought> ve reasoning metni content'e girmez. Provider'ın
+    sonraki turda istediği imza / reasoning_details burada taşınır;
+    LLMClient isteğe yalnız ilgili alanı koyar.
+    """
+    text = clean_response(result.assistant_text)
+    for query in result.search_queries:
+        text += f"\n<web_search>{query}</web_search>"
+    message = {"role": "assistant", "content": text.strip()}
+    continuation = getattr(result, "continuation", None)
+    if continuation:
+        message["provider_state"] = continuation
+    return message
+
+
 class ChatService:
     """Mesaj gönderim akışını koordine eder.
 
@@ -24,7 +41,8 @@ class ChatService:
     def __init__(self, state: ApplicationState, attachments: AttachmentManager,
                  context: ContextManager, llm_client: LLMClient,
                  session_manager: SessionManager, renderer: StreamRenderer,
-                 terminal: TerminalUI, search_service: SearchService = None):
+                 terminal: TerminalUI, search_service: SearchService = None,
+                 page=None):
         self.state = state
         self.attachments = attachments
         self.context = context
@@ -33,6 +51,7 @@ class ChatService:
         self.renderer = renderer
         self.terminal = terminal
         self.search = search_service
+        self.page = page
 
     def send_message(self, user_input: str):
         try:
@@ -164,12 +183,22 @@ class ChatService:
                 renderer=self.renderer,
                 debug_enabled=self.state.debug_enabled,
                 cancel=cancel,
+                reasoning_effort=self.state.reasoning_effort,
             )
         except GenerationCancelled:
             raise
         except Exception as e:
             print(f"\n{RED}[Hata]{RESET}: {e}\n")
             return None
+        finally:
+            # 'istenen → gönderilen' effort açıklamasını sayfaya taşı
+            # (hata olsa da son denemenin notu gösterilir)
+            note = getattr(self.llm_client, "last_effort_note", "")
+            if self.page is not None:
+                try:
+                    self.page.set_effort_note(note)
+                except Exception:
+                    pass
 
         if result.usage_estimated:
             result.input_tokens = self.context.estimate_messages(history[:-1])
@@ -187,10 +216,7 @@ class ChatService:
             result.input_tokens, result.output_tokens,
         )
 
-        assistant_message = clean_response(result.assistant_text)
-        for query in result.search_queries:
-            assistant_message += f"\n<web_search>{query}</web_search>"
-        history.append({"role": "assistant", "content": assistant_message.strip()})
+        history.append(assistant_history_message(result))
         self.sessions.storage.save_history(self.state.active_session.id, history)
 
         return result

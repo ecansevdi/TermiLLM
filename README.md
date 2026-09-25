@@ -19,10 +19,10 @@ Diğer önemli yetenekleri:
 
 ### Gereksinimler
 
-- **Python 3.10+** (yalnızca `openai` ve `python-dotenv` pip bağımlılığı vardır; arama ve arayüz katmanı standart kütüphane ile çalışır)
+- **Python 3.10+** (tek pip bağımlılığı `openai`; konfigürasyon için stdlib `tomllib` kullanılır — `python-dotenv` kaldırıldı)
 - **Linux** (mikrofon kaydı `arecord`/ALSA ve named pipe kullanır; diğer özellikler platformdan bağımsızdır)
 - Çalışan bir **llama.cpp server** (veya OpenAI-compatible bir endpoint)
-- Fare tekerleği/kopyalama ve koyu gri kutular için 256-renk + SGR mouse destekli bir terminal (Kitty, Alacritty, WezTerm, GNOME Terminal, Konsole, iTerm2 …)
+- Kopyalama/seçim ve koyu gri kutular için 256-renk destekli bir terminal (Kitty, Alacritty, WezTerm, GNOME Terminal, Konsole, iTerm2 …)
 
 İsteğe bağlı bileşenler:
 
@@ -39,28 +39,29 @@ cd TermiLLM
 bash setup.sh          # "libr" adında sanal ortam oluşturur, bağımlılıkları kurar
 ```
 
-Ardından proje kökünde bir `.env` dosyası oluşturun:
+Sağlayıcı ayarları **TOML konfigürasyon dosyasında** tutulur:
+`~/.config/termillm/config.toml` (proje dizininde dosya tutulmaz; gizliler
+asla repoya girmez).
 
-```dotenv
-SERVER_BASE=http://127.0.0.1:8080
-base_url=http://127.0.0.1:8080/v1
-api_key=sk-...
+Eski `.env` dosyanız varsa **ilk açılışta otomatik içe aktarılıp silinir**
+(anahtar değerleri + `p<n>_` sağlayıcı kayıtları, `${VAR}` genişletmeleriyle).
+İstemezseniz programı ilk kez çalıştırmadan `.env`'i kendiniz silebilirsiniz;
+aynı ayarları Ctrl+O menüsünden girmek de mümkündür.
+
+```toml
+active = "local"
+
+[providers.local]
+base_url = "http://127.0.0.1:8080/v1"   # OpenAI-compatible endpoint
+api_key  = "enc1:…"                      # şifreli; llama.cpp'te placeholder yeter
+model    = "Bonsai-2"
 ```
 
-- `SERVER_BASE` — yerelde context boyutu keşfi için kullanılır (llama.cpp `/props`).
-- `base_url` — OpenAI-compatible chat endpoint'inin tam adresi (ör. `SERVER_BASE/v1`, `https://api.x.ai/v1`, OpenRouter, OrcaRouter).
-- `api_key` — llama.cpp server'da yok sayılır; uzak servislerde gerçek anahtardır.
+- `base_url` — OpenAI-compatible chat endpoint'inin tam adresi (ör. `http://127.0.0.1:8080/v1`, `https://api.x.ai/v1`, OpenRouter).
+- `api_key` — llama.cpp server'da yok sayılır (`sk-local` placeholder yeterlidir); uzak servislerde gerçek anahtardır ve **şifreli** saklanır (`enc1:` öneki, makineye bağlı gizli ile: `~/.termillm_salt`).
+- Aktif kayıt `active =` ile seçilir; sağlayıcı eklemek ve model seçmek için program içinden **Ctrl+O** menüsü önerilir (model listesini `GET /models`'ten çeker).
 
-İsteğe bağlı ortam değişkenleri:
-
-```dotenv
-WHISPER_BIN=whisper-cli                          # whisper.cpp binary yolu
-WHISPER_MODEL=~/whisper.cpp/models/ggml-base.bin # GGML model dosyası
-WHISPER_LANG=tr                                  # transkripsiyon dili
-LLAMA_PIPE=/tmp/llama_input.pipe                 # named pipe yolu
-CONTEXT_PROVIDER=llamacpp                        # zorla: llamacpp | openrouter | orcarouter | xai | openai | anthropic | claude
-CONTEXT_FALLBACK=4096                            # keşif başarısızsa
-```
+İsteğe bağlı ortam değişkenleri (kabuk ortamında):
 
 Çalıştırma:
 
@@ -135,14 +136,71 @@ saat 14:33
 | `Ctrl+U` `Ctrl+K` `Ctrl+W` | Satır başına kadar sil / satır sonuna kadar sil / kelime sil |
 | `@` yaz | Dosya seçme kutusunu aç (aynı satırda yazmaya devam) |
 | `Tab` | Dosya kutusunu aç / kutuda gezin |
-| **Fare tekerleği ↑↓** | Geçmişe kaydırma (sağ üstte `↑N` göstergesi); en alta dönünce canlı akış sürer |
-| **Fare sol tuş + sürükle** | Seçim; bırakınca metin **OSC 52 ile panoya kopyalanır** |
-| `Ctrl+X` (veya üretimde `Ctrl+C`) | Yanıtı kes; program açık kalır |
+| **Fare tekerleği ↑↓** (veya `↑ ↓`/`PgUp PgDn`, boş girdi kutusunda) | Geçmişe kaydırma (sağ üstte `↑N` göstergesi); en alta dönünce canlı akış sürer |
+| **Fare sol tuş + sürükleme** | Terminalin **kendi native seçimi** — normal metin gibi seç, kopyala, yapıştır |
+| `Ctrl+O` | **Providers menüsü** (İngilizce): Select Provider (`/` REGEX arama, `d` silme) / Enter API / **Quick Add Provider** — model listesi `GET /models`'ten çekilir; kayıtlar `~/.config/termillm/config.toml`'a yazılır, seçim anında etkinleşir. Sonrasında effort sorulur. Quick Add: 15 hazır sağlayıcı (OpenRouter, Cerebras, Groq, Together, Mistral, DeepSeek, xAI, Fireworks, OpenAI, Gemini, Claude, OpenCode Zen/Go, Ollama, LM Studio) — yalnızca API key girilir (model seçimi Select Provider'dan). API key'ler **şifreli** saklanır (`enc1:`, makineye bağlı gizli ile; `~/.termillm_salt`) |
+| `Ctrl+P` | **Effort seçimi.** Açılışta seçim yoktur (`provider default`): isteğe effort alanı konmaz. Seçenekler `none · minimal · low · medium · high · xhigh · max`. Seçim sağlayıcı değişince korunur |
 | `q` / `quit` | Çıkış |
 
-> **Kopyalama notu:** OSC 52'yi iTerm2, Kitty, Alacritty, WezTerm, Windows Terminal ve `set-clipboard on` olan tmux destekler. Desteklemeyen terminallerde seçim yine de terminalin kendi kopyalama davranışına düşer.
+> **Seçim notu:** Uygulama fare olaylarını yakalamaz (mouse tracking modu açılmaz); metin seçimi ve kopyalama tamamen terminalin native davranışıdır — hangi tuş kombinasyonunu kullanıyorsan normal terminal metninde nasıl çalışıyorsa burada da öyle çalışır.
 
 > **Saat damgası:** Açılışta arka planda internete bakılır — varsa IP'ye göre **bölgesel saat** (worldtimeapi, olmazsa bir sunucunun HTTP `Date` başlığı) çekilir ve bilgisayar saatiyle farkı önbelleğe alınır (10 dk'da bir tazelenir). İnternet yoksa bilgisayar saati kullanılır. Mesaj damgaları ağ beklemeden basılır.
+
+---
+
+## Reasoning Effort (Ctrl+P)
+
+Açılışta effort seçilmemiştir (`reasoning_effort` boş). İstek gövdesine
+`reasoning_effort`, `reasoning` veya `output_config` **konmaz**; model
+sağlayıcının kendi varsayılanını kullanır. Kutu üstündeki ipucu
+`Ctrl+P efor: provider default` der.
+
+`Ctrl+P` ile canonical bir seviye seçilir:
+`none · minimal · low · medium · high · xhigh · max`
+
+Seçilen değer, aktif `sağlayıcı + model + API türü`ne göre
+`llm/reasoning.py` içinde gerçek API alanına çevrilir ve sağlayıcı
+değişince de durur. Bilinmeyen model adında parametre gönderilmez.
+İpucu satırı "istenen → gönderilen" farkını gösterebilir:
+`Gemini/model limiti: xhigh→high` gibi.
+
+| Sağlayıcı (model destekliyorsa) | Request alanı |
+|---|---|
+| llama.cpp / yerel sunucular | `chat_template_kwargs: {reasoning_effort, enable_thinking}` (`none` → `enable_thinking=false`). `reasoning_format` gönderilmez; sunucu `reasoning_content` üretirse okunur |
+| OpenAI (o-serisi, gpt-5+) | `reasoning_effort: <seviye>` (üst seviye) |
+| Gemini (OpenAI-compatible) | `reasoning_effort: <seviye>` — Gemini bunu `thinking_level`/`thinking_budget`'a çevirir |
+| Groq | `reasoning_effort`. Qwen için ayrıca `reasoning_format=parsed` (çıktı biçimi; effort'tan ayrı). GPT-OSS bu biçim alanını kabul etmez |
+| xAI (Grok 4+) | `reasoning_effort: <seviye>` |
+| DeepSeek (reasoner) | `reasoning_effort: <seviye>` |
+| OpenRouter | `reasoning: {"effort": <seviye>}` |
+| Claude (native Messages API) | `output_config: {"effort": <seviye>}` — native transport; OpenAI uyumluluk yolu bu alanı yok sayar |
+| Fireworks (Qwen, GLM, DeepSeek, MiniMax) | `reasoning_effort`: `none` … `max`. Düşünme `reasoning_content` alanında okunur |
+| Cerebras | Modele göre `none/low/medium/high` (GPT-OSS: `low/medium/high`). Qwen, GPT-OSS ve Kimi için `reasoning_format=parsed` |
+| Mistral Small / Medium | Yalnız `none` ve `high`. `medium` aşağı iner (`none`). Magistral'a effort parametresi gitmez |
+| Together | GPT-OSS: `low/medium/high`. DeepSeek V4 kullanıcının değerini alır (sunucu eşler). Diğer model adları atlanır |
+| OpenCode Zen/Go ve bilinmeyen uç | **omit** — istenirse `config.toml`'da `reasoning_api = "llamacpp\|openai\|openrouter\|anthropic\|none"` |
+
+**Normalleştirme kuralları:** exact değer destekleniyorsa exact gönderilir; desteklenmeyen değer resmi kümedeki en yakın **aşağı** seviyeye iner (`xhigh`→`high`); kullanıcı istemeden seviye **yükseltilmez** (eksikse omit); aynı request'te birden fazla effort formatı bulunmaz.
+
+**400 güvenlik ağı:** Sağlayıcı reasoning alanını reddederse (`unknown field` vb.) istek effortsüz **bir kez** yeniden denenir, bu `sağlayıcı+model` kombinasyonu process boyunca "unsupported" önbelleğe alınır ve debug.log'a yazılır. Kimlik/rate-limit gibi ilgisiz hatalarda retry yapılmaz.
+
+## Düşünme ve cevap
+
+Ham akış önce ortak olaylara indirgenir (`llm/normalize.py`), sonra ekrana gelir. Sıra: `reasoning_details`, `reasoning`, `reasoning_content`, Ollama `thinking`, Claude `thinking_delta`, Gemini `thought_summary`, Mistral `ThinkChunk`. Aynı parçada alias'lar ikinci kez yazılmaz. `signature_delta` ve `thought_signature` ekrana basılmaz.
+
+Structured alan yoksa ve cevap henüz görünür metin üretmeden bir açılış etiketiyle başlıyorsa yedek ayrıştırıcı çalışır (`llm/reasoning_text.py`):
+
+- `<think>…</think>` ve `<thought>…</thought>` (Gemini'nin OpenAI uyumlu ucunda görülen biçim)
+- Ministral: `[THINK]…[/THINK]`
+- Cohere: `<|START_THINKING|>` … `<|END_THINKING|>` / `<|START_RESPONSE|>`
+
+`<analysis>`, `<reasoning>`, `<thinking>` ve cümlenin ortasındaki etiketler olduğu gibi kalır. Yalnız kapanış etiketi (`</think>`) önceki metni düşünmeye çevirmez; bu yalnız doğrulanmış forced-open profilde olur. Ham GPT-OSS Harmony (`analysis` / `final`) kendiliğinden açılmaz; Groq, Cerebras, Ollama, LM Studio ve llama.cpp bu biçimi kendileri ayırır.
+
+`<web_search>` yalnız nihai cevapta aranır. Düşünme metnindeki etiket arama turu başlatmaz.
+
+Ekranda düşünme `💭 Düşünüyor...` altındadır; sağlayıcı özet verdiğinde başlık `💭 Düşünme özeti...` olur. Metin soluk sarı (turuncu) akar. Kalın, italik ve satır içi kod bu rengin üstüne biner; stil kapanınca renk terminal varsayılanına değil yeniden turuncuya döner. Sayfa her satırı beyaz önekle boyadığı için renk, parçanın başında değil satırın kendi ANSI taban stilinde durur (`ui/markdown.py` `base_style`).
+
+Oturum geçmişine yazılan assistant metni nihai cevaptır; `<think>` / `<thought>` içeriğe karışmaz. İmza, OpenRouter `reasoning_details`, DeepSeek `reasoning_content` ve Mistral parça listesi `provider_state` olarak saklanır ve sonraki istekte yalnız o sağlayıcının beklediği alan geri konur.
 
 ---
 
@@ -220,7 +278,7 @@ Yollar: `@src/`, `@../`, `@~/`, `@/abs/yol/`. Boşluklu ad: `@"benim dosya.txt"`
 - Sayfa, terminalin **alternate screen buffer'ında** çizilir (`?1049h/l`); ana ekran korunur, imleç DECSC/DECRC ile saklanır/geri yüklenir.
 - Tüm program çıktısı `sys.stdout` sayfaya yönlendirilmiş bir yazıcıdan akar: herhangi bir `print()` otomatik olarak sayfaya düşer; sayfanın kendi çizimleri ise gerçek stdout üzerinden yapılır (iç ANSI dizileri içerik sanılmaz).
 - Terminal `cbreak` moduna alınır; ICRNL kapatılarak `Enter` CR olarak okunur (gönder), `Ctrl+J` LF kalır (yeni satır). OPOST ve ISIG açık kalır: `\n` çıktısı bozulmaz, Ctrl+C/SIGINT çalışır.
-- SGR mouse (`?1000h ?1006h`) açılır: tekerlek olayları kaydırmaya, sol tuş seçimi panoya kopyalamaya çevrilir. Seçim metni, sayfanın içerik modelinden (geçmiş tamponu) okunur.
+- Mouse tracking **hiç açılır** (uygulama fare olaylarını yakalamaz): metin seçimi terminalin native davranışıdır. Tekerlek için `?1007h` (alternate scroll) açılır — alt ekranda tekerlek `↑`/`↓` ok tuşlarına çevrilir ve sohbet kaydırmasına bağlanır.
 - Geçmiş tamponu 5000 satır tutar; fare ile geçmişe bakarken canlı akış görünümü kaydırmaz.
 
 ### Oturum deposu
@@ -251,9 +309,9 @@ cat /tmp/cikti.txt > /tmp/llama_input.pipe
 
 ### Model iletişimi
 
-- İstekler `chat.completions` streaming uçuna yapılır; `reasoning_effort: xhigh` ve `enable_thinking` chat template parametreleri gönderilir (llama.cpp server'da düşünme modunu açar).
-- Düşünme akışı iki yoldan yakalanır: OpenAI tarzı `reasoning_content` delta'ları ve `<think>…</think>` etiket fallback'i. Düşünme metni soluk sarı, `💭 Düşünüyor...` başlığıyla gösterilir.
-- Markdown formatter kod blokları (koyu gri zemin), satır içi kod (turkuaz), kalın yazı, başlıklar ve alıntıları (koyu gri zemin) ANSI renklerine çevirir; hepsi stream sırasında (harf harf) işlenir.
+- İstekler `chat.completions` streaming ucuna gider. Effort alanı yalnız Ctrl+P ile bir seviye seçildiyse ve model onu destekliyorsa eklenir. Claude `api.anthropic.com` için native Messages API kullanılır (`output_config.effort`).
+- Düşünme ve nihai cevap ayrı kanallardadır (yukarıdaki "Düşünme ve cevap"). Düşünme metni turuncu taban renkte, Markdown stilleri bu rengin üstünde akar.
+- Markdown formatter kod blokları (koyu gri zemin), satır içi kod (turkuaz), kalın yazı, italik (reasoning kanalında), başlıklar ve alıntıları ANSI'ye çevirir; hepsi stream sırasında (harf harf) işlenir. Reasoning kanalında geçici stil kapanınca taban turuncu geri gelir.
 - Model adı alanı sabittir (`"agent_model"`); llama.cpp server bu alanı yok sayar ve sunucuda yüklü model kullanılır.
 
 ### Mesaj saatleri
@@ -267,7 +325,7 @@ cat /tmp/cikti.txt > /tmp/llama_input.pipe
 TermiLLM/
 ├── main.py                  # composition root — nesneleri kurar, başlatır
 ├── application.py           # AgentApplication: başlangıç akışı + REPL döngüsü
-├── config.py                # .env + sabitler (Config dataclass)
+├── config.py                # TOML konfig (~/.config/termillm/) + key şifreleme
 ├── state.py                 # runtime state (Application/Session/AttachmentState)
 ├── commands/
 │   ├── router.py            # girdiyi komut sınıflarına yönlendirir
@@ -280,8 +338,12 @@ TermiLLM/
 │   ├── attachments.py       # bekleyen metin/görsel ekleri
 │   └── mentions.py          # @dosya ve ?"sorgu" ayrıştırma
 ├── llm/
-│   ├── client.py            # OpenAI-compatible stream çağrısı
-│   ├── stream.py            # <think>/<web_search> ayrıştırıcı, StreamResult
+│   ├── client.py            # stream çağrısı, effort ve reasoning normalizasyonu
+│   ├── reasoning.py         # Ctrl+P effort → sağlayıcı alanı
+│   ├── normalize.py         # structured delta → reasoning/content
+│   ├── reasoning_text.py    # <think>/<thought> ve diğer inline yedekler
+│   ├── anthropic_transport.py  # Claude native Messages SSE
+│   ├── stream.py            # içerikte <web_search>, StreamResult
 │   ├── server_info.py       # context keşfi (llamacpp, openrouter, xai, …)
 │   ├── cancel.py            # Ctrl+X / SIGINT ile tur iptali
 │   └── abort.py             # soket kapatma + llama-server /abort
@@ -299,13 +361,13 @@ TermiLLM/
 │   └── providers.py         # SearXNG ve Tavily sağlayıcıları
 ├── ui/
 │   ├── page.py              # tam ekran sohbet sayfası (siyah zemin, üst çubuk,
-│   │                        #   giriş kutusu, balonlar, overlay, scroll, seçim)
+│   │                        #   giriş kutusu, balonlar, overlay, scroll)
 │   ├── terminal.py          # renk paleti, show_* sunumları, üst çubuk köprüsü
 │   ├── clock.py             # mesaj saatleri (internet → bölgesel saat keşfi)
-│   ├── clipboard.py         # OSC 52 panoya kopyalama
-│   ├── markdown.py          # Markdown → ANSI (gri kod bloğu/alıntı zeminleri)
+│   ├── markdown.py          # Markdown → ANSI; reasoning için turuncu taban stil
 │   ├── stream_renderer.py   # düşünme/yanıt akışını çizer + saat damgası
-│   ├── keys.py              # ham tuş okuma (Shift+Enter, mouse wheel/seçim)
+│   ├── keys.py              # ham tuş okuma (Shift+Enter, ok tuşları; fare yakalanmaz)
+│   ├── provider_menu.py     # Ctrl+O provider/model menüsü (Select Provider / Enter API)
 │   ├── line_edit.py         # girişi sayfa kutusuna veya düz satıra yönlendirir
 │   ├── picker.py            # dosya kutusu (dizin gezme, sayfada alta demirli)
 │   └── completer.py         # yol eşleştirme
@@ -325,4 +387,4 @@ Katmanlar tek yönlü bağımlıdır: `ui` ← `commands/chat` ← `sessions/llm
 python -m unittest discover -s tests   # veya: python -m pytest tests/
 ```
 
-Testler `chat/mentions`, `ui/completer`, `ui/picker`, `llm/cancel`, `llm/server_info`, `llm/abort` modüllerini kapsar; ağ ve tty gerektirmez.
+Testler `chat/mentions`, `ui/completer`, `ui/picker`, `llm/cancel`, `llm/server_info`, `llm/abort`, effort zinciri (`test_ctrlp_chain`, `test_reasoning`), reasoning akışı (`test_reasoning_stream`) ve reasoning rengini (`test_reasoning_color`) kapsar; ağ ve tty gerektirmez.

@@ -45,7 +45,7 @@ def main():
 
     chat_service = ChatService(
         state, attachments, context, llm_client, session_manager, renderer,
-        terminal, search_service,
+        terminal, search_service, page=page,
     )
 
     session_commands = SessionCommands(session_manager, context, attachments, terminal)
