@@ -3,7 +3,7 @@ import sys
 import threading
 import time
 
-from ui.terminal import DIM, RESET, YELLOW
+from ui.terminal import DIM, RESET, YELLOW, get_page
 
 try:
     import readline
@@ -41,11 +41,18 @@ class PipeInput:
                     with self._prefill_lock:
                         self._prefill_text = text
 
-                    sys.stdout.write(
-                        f"\n{YELLOW}🎙️  Ses aktarıldı → mevcut satırı boşaltıp "
-                        f"Enter'a basın{RESET}\n"
-                    )
-                    sys.stdout.flush()
+                    page = get_page()
+                    if page is not None and page.active:
+                        page.queue_line(
+                            f"{YELLOW}🎙️  Ses aktarıldı → kutuya aktarıldı, "
+                            f"Enter ile gönderin{RESET}"
+                        )
+                    else:
+                        sys.stdout.write(
+                            f"\n{YELLOW}🎙️  Ses aktarıldı → mevcut satırı boşaltıp "
+                            f"Enter'a basın{RESET}\n"
+                        )
+                        sys.stdout.flush()
 
                     if HAS_READLINE:
                         try:

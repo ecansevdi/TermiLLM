@@ -29,7 +29,7 @@ MAX_MATCHES = 80
 def token_at_cursor(chars, pos: int) -> tuple[int, str]:
     """İmlecin solundaki boşluksuz token (başlangıç indeksi, metin)."""
     start = pos
-    while start > 0 and chars[start - 1] not in " \t":
+    while start > 0 and chars[start - 1] not in " \t\n":
         start -= 1
     if isinstance(chars, str):
         return start, chars[start:pos]

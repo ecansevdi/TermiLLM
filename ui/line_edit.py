@@ -1,20 +1,15 @@
-"""Kendi satır editörü: @ yazılınca dosya kutusu açılır.
+"""Satır editörü: sayfa modunda çok satırlı kutu, düz modda klasik satır.
 
-Readline tamamlama Tab'a bağlıdır ve kutu onun içinde kaybolur.
-Burada her tuş bize gelir; token başında @ görünce kutu hemen açılır.
+Sayfa modunda (Page etkin) girdi, sayfanın altındaki sabit gri kutuda okunur:
+Enter gönderir, Shift+Enter/Ctrl+J yeni satır açar. Düz modda eski davranış
+(@ yazınca dosya kutusu) korunur.
 """
 
 from __future__ import annotations
 
-import select
 import sys
-import termios
-import tty
 
-from ui.completer import token_at_cursor
-from ui.keys import read_key
-from ui.picker import pick_file
-from ui.terminal import GREEN, RESET
+from ui.terminal import GREEN, RESET, get_page
 
 PROMPT_VISIBLE = "Sen: "
 _HISTORY: list[str] = []
@@ -29,7 +24,10 @@ def _redraw(chars: list[str], pos: int):
     sys.stdout.flush()
 
 
-def _open_picker(chars: list[str], pos: int) -> tuple[list[str], int]:
+def _open_picker_flat(chars: list[str], pos: int) -> tuple[list[str], int]:
+    from ui.completer import token_at_cursor
+    from ui.picker import pick_file
+
     start, token = token_at_cursor(chars, pos)
     if not token.startswith("@"):
         return chars, pos
@@ -46,18 +44,39 @@ def _open_picker(chars: list[str], pos: int) -> tuple[list[str], int]:
 
 
 def read_line(prefill: str = "", poll_prefill=None) -> str:
-    """Bir satır oku. Ctrl-C KeyboardInterrupt, boş satırda Ctrl-D EOFError."""
-    fd = sys.stdin.fileno()
-    chars = list(prefill or "")
-    pos = len(chars)
-    hist_idx = None
-    saved = None
+    """Bir satır oku. Ctrl-C KeyboardInterrupt, boş satırda Ctrl-D EOFError.
+
+    Sayfa modunda Page.get_input kullanılır (çok satırlı gri kutu).
+    """
+    page = get_page()
+    if page is not None and page.active:
+        if prefill:
+            return page.get_input(poll_prefill=lambda: prefill)
+        return page.get_input(poll_prefill=poll_prefill)
 
     if not sys.stdin.isatty():
         line = sys.stdin.readline()
         if line == "":
             raise EOFError
         return line.rstrip("\n")
+
+    return _read_line_flat(prefill, poll_prefill)
+
+
+def _read_line_flat(prefill: str, poll_prefill) -> str:
+    """Klasik tek satır editörü (sayfa kapalıyken)."""
+    import select
+    import termios
+    import tty
+
+    from ui.completer import token_at_cursor
+    from ui.keys import read_key
+
+    fd = sys.stdin.fileno()
+    chars = list(prefill or "")
+    pos = len(chars)
+    hist_idx = None
+    saved = None
 
     old = termios.tcgetattr(fd)
     try:
@@ -79,12 +98,13 @@ def read_line(prefill: str = "", poll_prefill=None) -> str:
                 sys.stdout.write("\r\n")
                 sys.stdout.flush()
                 raise KeyboardInterrupt
-            if key == "ctrl-d":
-                if not chars:
+            if key in ("ctrl-d", "shift-enter"):
+                if key == "ctrl-d" and not chars:
                     sys.stdout.write("\r\n")
                     sys.stdout.flush()
                     raise EOFError
-                continue
+                if key == "shift-enter":
+                    continue
             if key == "enter":
                 sys.stdout.write("\r\n")
                 sys.stdout.flush()
@@ -139,7 +159,7 @@ def read_line(prefill: str = "", poll_prefill=None) -> str:
                     chars = list(_HISTORY[hist_idx])
                     pos = len(chars)
             elif key == "tab":
-                chars, pos = _open_picker(chars, pos)
+                chars, pos = _open_picker_flat(chars, pos)
                 _redraw(chars, pos)
                 continue
             elif key == "esc":
@@ -150,7 +170,7 @@ def read_line(prefill: str = "", poll_prefill=None) -> str:
                 _redraw(chars, pos)
                 _, token = token_at_cursor(chars, pos)
                 if token == "@":
-                    chars, pos = _open_picker(chars, pos)
+                    chars, pos = _open_picker_flat(chars, pos)
                 continue
             _redraw(chars, pos)
     finally:

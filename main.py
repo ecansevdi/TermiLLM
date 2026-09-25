@@ -17,8 +17,9 @@ from search.service import SearchService
 from sessions.manager import SessionManager
 from sessions.storage import SessionStorage
 from state import ApplicationState
+from ui.page import Page
 from ui.stream_renderer import StreamRenderer
-from ui.terminal import TerminalUI
+from ui.terminal import TerminalUI, set_page
 
 
 def main():
@@ -30,6 +31,8 @@ def main():
     session_manager = SessionManager(storage)
 
     terminal = TerminalUI()
+    page = Page("TermiLLM")
+    set_page(page)  # show_* çıktıları sayfa etkinse siyah sayfaya akar
     context = ContextManager(config.system_prompt, config.context_safety_ratio)
     renderer = StreamRenderer()
     llm_client = LLMClient(config)
@@ -64,6 +67,7 @@ def main():
         pipe_input,
         context,
         mentions,
+        page=page,
     )
     app.run()
 

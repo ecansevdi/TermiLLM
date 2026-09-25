@@ -16,7 +16,7 @@ import sys
 
 from ui.completer import enter_browser_dir, list_browser_entries, parse_browse_token
 from ui.keys import read_key
-from ui.terminal import CYAN, DIM, GREEN, RESET
+from ui.terminal import CYAN, DIM, GREEN, RESET, get_page
 
 MIN_HEIGHT = 4
 MAX_HEIGHT = 16
@@ -87,6 +87,10 @@ def _compose_lines(items: list, index: int, height: int, cols: int,
 def _draw(lines: list[str], first: bool) -> int:
     """Kutuyu basar. first=True iken prompt'un altına iner.
     Dönüş: kutunun satır sayısı (silmek için)."""
+    page = get_page()
+    if page is not None and page.active:
+        page.draw_picker(lines)
+        return len(lines)
     if first:
         sys.stdout.write("\r\n")
     sys.stdout.write("\r\n".join(lines))
@@ -98,6 +102,10 @@ def _erase_box(n_lines: int):
     """Kutuyu siler; imleç kutunun ilk satırında kalır (prompt durur)."""
     if n_lines <= 0:
         return
+    page = get_page()
+    if page is not None and page.active:
+        page.erase_picker(n_lines)
+        return
     if n_lines > 1:
         sys.stdout.write(f"\033[{n_lines - 1}A")
     sys.stdout.write("\r\033[J")
@@ -106,6 +114,9 @@ def _erase_box(n_lines: int):
 
 def _return_to_prompt(n_lines: int):
     _erase_box(n_lines)
+    page = get_page()
+    if page is not None and page.active:
+        return
     sys.stdout.write("\033[1A\r")
     sys.stdout.flush()
 
@@ -120,7 +131,9 @@ def _filter(entries: list[str], needle: str) -> list[str]:
 def pick_file(token: str = "@") -> str | None:
     """Dizin gezicili kutu. Dosya seçilince '@yol' döner; Esc'de None."""
     global _BOX_HEIGHT
-    if not sys.stdin.isatty():
+    page = get_page()
+    page_mode = page is not None and page.active
+    if not page_mode and not sys.stdin.isatty():
         return None
 
     prefix, needle = parse_browse_token(token)
@@ -151,6 +164,8 @@ def pick_file(token: str = "@") -> str | None:
             drawn = _draw(lines, first)
             first = False
             key = read_key(sys.stdin.fileno())
+            if key == "shift-enter":
+                key = "tab"
             if key in ("+", "="):
                 height = clamp_height(height + 1, len(filtered) or 1, rows)
                 _BOX_HEIGHT = height

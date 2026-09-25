@@ -5,7 +5,7 @@ from chat.service import ChatService
 from search.config import SearchConfig
 from search.service import SearchService
 from state import ApplicationState
-from ui.terminal import CYAN, DIM, GREEN, RED, RESET, YELLOW
+from ui.terminal import CYAN, DIM, GREEN, RED, RESET, YELLOW, get_page
 
 
 class SearchCommands:
@@ -48,23 +48,29 @@ class SearchCommands:
               f"(veya satır içinde ?\"sorgu\" kullanın).{RESET}\n")
 
     def ayarlar(self, state: ApplicationState):
-        config = self.search.load()
-        while True:
-            self._show_menu(config)
-            try:
-                choice = input("Seçim: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                return
-            if choice == "0":
-                print()
-                return
-            if choice == "":
-                continue
-            try:
-                self._apply(choice, config)
-            except Exception as e:
-                print(f"{RED}❌ {e}{RESET}\n")
+        page = get_page()
+        saved = page.suspend() if page is not None and page.active else None
+        try:
+            config = self.search.load()
+            while True:
+                self._show_menu(config)
+                try:
+                    choice = input("Seçim: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    return
+                if choice == "0":
+                    print()
+                    return
+                if choice == "":
+                    continue
+                try:
+                    self._apply(choice, config)
+                except Exception as e:
+                    print(f"{RED}❌ {e}{RESET}\n")
+        finally:
+            if page is not None and saved is not None:
+                page.resume(saved)
 
     def _show_menu(self, config: SearchConfig):
         key_state = "ayarlanmamış"

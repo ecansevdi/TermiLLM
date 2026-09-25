@@ -35,7 +35,6 @@ class ChatService:
         self.search = search_service
 
     def send_message(self, user_input: str):
-        print(f"{DIM}   Ctrl+X yanıtı keser (program açık kalır){RESET}")
         try:
             with CancelWatch() as cancel:
                 self._send_message(user_input, cancel)

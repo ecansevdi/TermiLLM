@@ -8,7 +8,8 @@ from llm.server_info import resolve_context_size
 from media.pipe import PipeInput
 from sessions.manager import SessionManager
 from state import ApplicationState
-from ui.terminal import RED, RESET, TerminalUI
+from ui import clock
+from ui.terminal import RED, RESET, TerminalUI, get_page
 
 
 class AgentApplication:
@@ -18,7 +19,8 @@ class AgentApplication:
                  terminal: TerminalUI, router: CommandRouter,
                  chat_service: ChatService, session_manager: SessionManager,
                  attachments: AttachmentManager, pipe_input: PipeInput,
-                 context: ContextManager, mentions: MentionProcessor = None):
+                 context: ContextManager, mentions: MentionProcessor = None,
+                 page=None):
         self.config = config
         self.state = state
         self.terminal = terminal
@@ -29,6 +31,7 @@ class AgentApplication:
         self.pipe_input = pipe_input
         self.context = context
         self.mentions = mentions
+        self.page = page
 
     def run(self):
         storage = self.sessions.storage
@@ -43,10 +46,14 @@ class AgentApplication:
             self.state.active_session.history
         )
 
-        self.pipe_input.start()
-        self.pipe_input.install_pre_input_hook()
+        # "Yeni sayfa" katmanını aç (siyah zemin, üst çubuk, alt kutu)
+        if self.page is not None:
+            self.page.enter()
+        clock.warmup()   # arka planda bölgesel saat keşfi
+        if self.pipe_input:
+            self.pipe_input.start()
+            self.pipe_input.install_pre_input_hook()
 
-        self.terminal.show_fetching_context()
         n_ctx, source = resolve_context_size(
             self.config.api_base_url,
             self.config.api_key,
@@ -56,7 +63,6 @@ class AgentApplication:
         )
         if source == "fallback":
             self.terminal.show_context_fallback_warning(n_ctx)
-        self.terminal.show_fetched_context(n_ctx, source)
         self.state.max_context_tokens = n_ctx
 
         title = storage.get_title(self.state.active_session.id)
@@ -66,8 +72,14 @@ class AgentApplication:
             self.state.max_context_tokens,
             self.config.pipe_path,
         )
+        if self.page is not None:
+            self.page.set_metrics(
+                ctx_used=self.state.actual_context_tokens, ctx_total=n_ctx
+            )
 
         self._repl()
+        if self.page is not None:
+            self.page.leave()
 
     def _repl(self):
         while True:
@@ -94,13 +106,29 @@ class AgentApplication:
                 continue
 
             if self.mentions and ("@" in user_input or "?" in user_input):
+                # @dosya / ?arama işlemleri sayfayı askıya alıp düz terminalde
+                # çalışsın ki çıktıları balona karışmasın.
+                saved = self.page.suspend() if self.page else None
                 try:
                     user_input = self.mentions.process(user_input)
                 except MentionError as e:
                     print(f"{RED}❌ {e}{RESET}\n")
+                    if self.page:
+                        self.page.resume(saved)
                     continue
+                if self.page:
+                    self.page.resume(saved)
 
             if not user_input and not self.attachments.has_pending():
                 continue
 
+            if self.page is not None and page_active(self.page):
+                self.page.show_user_message(user_input)
+                self.page.queue_line("")  # balon ile cevap arası boşluk
             self.chat_service.send_message(user_input)
+            if self.page is not None and page_active(self.page):
+                self.page.queue_line("")  # tur sonu boşluğu
+
+
+def page_active(page) -> bool:
+    return page is not None and page.active

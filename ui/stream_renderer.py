@@ -1,3 +1,4 @@
+from ui import clock
 from ui.markdown import MarkdownFormatter
 from ui.terminal import CYAN, DIM, RESET, YELLOW
 
@@ -7,6 +8,7 @@ class StreamRenderer:
 
     def __init__(self):
         self.md_formatter = MarkdownFormatter()
+        self._streamed = False
 
     def show_thinking_started(self):
         print(f"\n{DIM}{YELLOW}💭 Düşünüyor...{RESET}")
@@ -21,6 +23,8 @@ class StreamRenderer:
         print(f"\n{CYAN}Ajan:{RESET} ", end="", flush=True)
 
     def show_response(self, text: str):
+        if text.strip():
+            self._streamed = True
         formatted = self.md_formatter.feed(text)
         print(formatted, end="", flush=True)
 
@@ -31,4 +35,7 @@ class StreamRenderer:
         print(RESET, end="", flush=True)
 
     def show_stream_end(self):
+        if self._streamed:
+            self._streamed = False
+            print(f"{DIM}saat {clock.now_str()}{RESET}")
         print("\n")
